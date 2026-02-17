@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Bun
+.bun/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+
+# OS
+.DS_Store
+
+# IDE
+*.swp
+*.swo

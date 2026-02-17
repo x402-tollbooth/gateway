@@ -1,0 +1,44 @@
+gateway:
+  port: 3000
+  discovery: true
+
+wallets:
+  base-sepolia: "0x0000000000000000000000000000000000000001"
+
+accepts:
+  - asset: USDC
+    network: base-sepolia
+
+defaults:
+  price: "$0.001"
+  timeout: 60
+
+upstreams:
+  dummy:
+    url: "http://localhost:4000"
+
+routes:
+  # Static price
+  "GET /weather":
+    upstream: dummy
+    path: "/weather"
+    price: "$0.01"
+
+  # Body-match pricing
+  "POST /chat":
+    upstream: dummy
+    path: "/chat"
+    match:
+      - where: { body.model: "haiku" }
+        price: "$0.005"
+      - where: { body.model: "sonnet" }
+        price: "$0.015"
+      - where: { body.model: "opus" }
+        price: "$0.075"
+    fallback: "$0.015"
+
+  # Param extraction + path rewrite
+  "GET /data/:query_id":
+    upstream: dummy
+    path: "/data/${params.query_id}"
+    price: "$0.05"

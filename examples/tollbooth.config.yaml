@@ -1,0 +1,73 @@
+# tollbooth.config.yaml — example multi-upstream AI gateway
+
+gateway:
+  port: 3000
+  discovery: true
+
+wallets:
+  base: "0xYourBaseWallet"
+  solana: "YourSolanaWallet"
+
+accepts:
+  - asset: USDC
+    network: base
+  - asset: USDC
+    network: solana
+
+defaults:
+  price: "$0.001"
+  timeout: 60
+
+upstreams:
+  anthropic:
+    url: "https://api.anthropic.com"
+    headers:
+      x-api-key: "${ANTHROPIC_API_KEY}"
+      anthropic-version: "2023-06-01"
+
+  openai:
+    url: "https://api.openai.com"
+    headers:
+      authorization: "Bearer ${OPENAI_API_KEY}"
+
+  dune:
+    url: "https://api.dune.com/api"
+    headers:
+      x-dune-api-key: "${DUNE_API_KEY}"
+
+routes:
+  "GET /v1/models":
+    upstream: anthropic
+    path: "/v1/models"
+    price: "$0.001"
+
+  "POST /ai/claude":
+    upstream: anthropic
+    path: "/v1/messages"
+    match:
+      - where: { body.model: "claude-haiku-*" }
+        price: "$0.005"
+      - where: { body.model: "claude-sonnet-*" }
+        price: "$0.015"
+      - where: { body.model: "claude-opus-*" }
+        price: "$0.075"
+    fallback: "$0.015"
+
+  "POST /ai/gpt":
+    upstream: openai
+    path: "/v1/chat/completions"
+    match:
+      - where: { body.model: "gpt-4o" }
+        price: "$0.01"
+      - where: { body.model: "gpt-4o-mini" }
+        price: "$0.002"
+    fallback: "$0.01"
+
+  "GET /data/dune/:query_id":
+    upstream: dune
+    path: "/v1/query/${params.query_id}/results"
+    price: "$0.05"
+
+hooks:
+  onSettled: "hooks/log-payment.ts"
+  onError: "hooks/handle-error.ts"

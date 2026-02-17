@@ -1,0 +1,12 @@
+# Bun Configuration
+# https://bun.sh/docs/runtime/configuration
+
+[install]
+optional = false
+dev = true
+peer = false
+workspaces = false
+
+[test]
+root = "src"
+timeout = 5000

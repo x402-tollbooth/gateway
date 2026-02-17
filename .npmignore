@@ -1,0 +1,13 @@
+src/
+scripts/
+examples/
+.git/
+.github/
+.vscode/
+.bun/
+node_modules/
+*.test.ts
+biome.json
+bunfig.toml
+tsconfig.json
+dist/*.map
