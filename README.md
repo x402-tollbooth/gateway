@@ -1,4 +1,7 @@
-# ⛩️ tollbooth
+# ⛩️ x402 Tollbooth
+
+[![npm version](https://img.shields.io/npm/v/x402-tollbooth.svg)](https://www.npmjs.com/package/x402-tollbooth)
+[![Publish to npm](https://github.com/Loa212/x402-tollbooth/actions/workflows/publish.yml/badge.svg)](https://github.com/Loa212/x402-tollbooth/actions/workflows/publish.yml)
 
 Turn any API into a paid [x402](https://x402.org) API. One YAML config, zero code.
 
