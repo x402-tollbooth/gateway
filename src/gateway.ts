@@ -27,6 +27,7 @@ import type {
 	TollboothGateway,
 	TollboothRequest,
 } from "./types.js";
+import { resolveFacilitatorUrl } from "./x402/facilitator.js";
 import { encodePaymentResponse, HEADERS } from "./x402/headers.js";
 import {
 	buildPaymentRequirements,
@@ -244,14 +245,20 @@ export function createGateway(
 				accepts,
 			);
 
-			// Resolve facilitator: route-level > top-level > default
-			const facilitatorUrl = route.facilitator ?? config.facilitator;
-			const facilitator = facilitatorUrl ? { url: facilitatorUrl } : undefined;
+			// Resolve facilitator per chain/asset: route → chain-specific → global → default
+			const facilitators = accepts.map((a) => ({
+				url: resolveFacilitatorUrl(
+					a.network,
+					a.asset,
+					route.facilitator,
+					config.facilitator,
+				),
+			}));
 
 			const settlement = await processPayment(
 				request,
 				requirements,
-				facilitator,
+				facilitators,
 			);
 
 			if (!settlement) {

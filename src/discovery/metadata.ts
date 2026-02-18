@@ -1,4 +1,5 @@
 import type { TollboothConfig } from "../types.js";
+import { resolveFacilitatorUrl } from "../x402/facilitator.js";
 
 export interface DiscoveryMetadata {
 	x402Version: number;
@@ -14,7 +15,7 @@ export interface DiscoveryEndpoint {
 		type: "static" | "dynamic" | "match";
 		defaultPrice?: string;
 	};
-	accepts: { asset: string; network: string }[];
+	accepts: { asset: string; network: string; facilitator?: string }[];
 	facilitator?: string;
 	metadata?: Record<string, unknown>;
 }
@@ -44,14 +45,25 @@ export function generateDiscoveryMetadata(
 			defaultPrice = (route.price as string) ?? config.defaults.price;
 		}
 
-		// Resolve facilitator: route-level > top-level
-		const facilitator = route.facilitator ?? config.facilitator;
+		// Resolve per-chain facilitator for each accepted payment
+		const acceptsWithFacilitator = accepts.map((a) => {
+			const url = resolveFacilitatorUrl(
+				a.network,
+				a.asset,
+				route.facilitator,
+				config.facilitator,
+			);
+			return { asset: a.asset, network: a.network, facilitator: url };
+		});
+
+		// Top-level facilitator for backward compat: use the first accept's facilitator
+		const facilitator = acceptsWithFacilitator[0]?.facilitator;
 
 		endpoints.push({
 			method: method.toUpperCase(),
 			path,
 			pricing: { type: pricingType, defaultPrice },
-			accepts: accepts.map((a) => ({ asset: a.asset, network: a.network })),
+			accepts: acceptsWithFacilitator,
 			...(facilitator && { facilitator }),
 			...(route.metadata && { metadata: route.metadata }),
 		});

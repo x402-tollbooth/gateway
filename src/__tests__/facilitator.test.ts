@@ -19,9 +19,11 @@ const baseConfig: TollboothConfig = {
 };
 
 describe("facilitator in discovery metadata", () => {
-	test("no facilitator when not configured", () => {
+	test("hardcoded default facilitator when not configured", () => {
 		const metadata = generateDiscoveryMetadata(baseConfig);
-		expect(metadata.endpoints[0].facilitator).toBeUndefined();
+		expect(metadata.endpoints[0].facilitator).toBe(
+			"https://x402.org/facilitator",
+		);
 	});
 
 	test("top-level facilitator appears on all endpoints", () => {

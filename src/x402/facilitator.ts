@@ -1,4 +1,4 @@
-import type { SettlementInfo } from "../types.js";
+import type { FacilitatorMapping, SettlementInfo } from "../types.js";
 
 const DEFAULT_FACILITATOR = "https://x402.org/facilitator";
 
@@ -18,6 +18,50 @@ export interface SettleResult {
 	transaction: string;
 	network: string;
 	errorReason?: string;
+}
+
+/**
+ * Resolve the facilitator URL for a given network/asset pair.
+ *
+ * Fallback chain:
+ *   route chain-specific → route default → global chain-specific → global default → hardcoded default
+ */
+export function resolveFacilitatorUrl(
+	network: string,
+	asset: string,
+	routeFacilitator?: string | FacilitatorMapping,
+	globalFacilitator?: string | FacilitatorMapping,
+): string {
+	const key = `${network}/${asset}`.toLowerCase();
+
+	// Route-level
+	if (routeFacilitator) {
+		if (typeof routeFacilitator === "string") return routeFacilitator;
+		const chainUrl = findChainMatch(routeFacilitator.chains, key);
+		if (chainUrl) return chainUrl;
+		if (routeFacilitator.default) return routeFacilitator.default;
+	}
+
+	// Global-level
+	if (globalFacilitator) {
+		if (typeof globalFacilitator === "string") return globalFacilitator;
+		const chainUrl = findChainMatch(globalFacilitator.chains, key);
+		if (chainUrl) return chainUrl;
+		if (globalFacilitator.default) return globalFacilitator.default;
+	}
+
+	return DEFAULT_FACILITATOR;
+}
+
+function findChainMatch(
+	chains: Record<string, string> | undefined,
+	key: string,
+): string | undefined {
+	if (!chains) return undefined;
+	for (const [k, v] of Object.entries(chains)) {
+		if (k.toLowerCase() === key) return v;
+	}
+	return undefined;
 }
 
 /**

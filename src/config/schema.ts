@@ -45,6 +45,13 @@ const routeHooksSchema = z
 	.strict()
 	.optional();
 
+const facilitatorMappingSchema = z.object({
+	default: z.string().url().optional(),
+	chains: z.record(z.string().url()).optional(),
+});
+
+const facilitatorSchema = z.union([z.string().url(), facilitatorMappingSchema]);
+
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["openai-compatible"]).optional(),
@@ -56,7 +63,7 @@ const routeConfigSchema = z.object({
 	payTo: payToSchema.optional(),
 	hooks: routeHooksSchema,
 	metadata: z.record(z.unknown()).optional(),
-	facilitator: z.string().url().optional(),
+	facilitator: facilitatorSchema.optional(),
 	rateLimit: rateLimitSchema.optional(),
 	models: z.record(z.string().min(1)).optional(),
 });
@@ -94,7 +101,7 @@ export const tollboothConfigSchema = z.object({
 
 	hooks: routeHooksSchema,
 
-	facilitator: z.string().url().optional(),
+	facilitator: facilitatorSchema.optional(),
 });
 
 export type TollboothConfigInput = z.input<typeof tollboothConfigSchema>;

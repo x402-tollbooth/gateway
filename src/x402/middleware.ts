@@ -98,11 +98,14 @@ export function createPaymentRequiredResponse(
  * Attempt to extract and verify a payment from the request.
  * Returns settlement info if payment is valid, null if no payment header present.
  * Throws if payment is present but invalid.
+ *
+ * Each entry in `facilitators` corresponds to the requirement at the same index.
+ * The payment is tried against each requirement/facilitator pair until one verifies.
  */
 export async function processPayment(
 	request: Request,
 	requirements: PaymentRequirementsPayload[],
-	facilitator?: FacilitatorConfig,
+	facilitators: FacilitatorConfig[],
 ): Promise<SettlementInfo | null> {
 	const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
 
@@ -112,61 +115,63 @@ export async function processPayment(
 
 	const paymentPayload = decodePaymentSignature(paymentHeader);
 
-	// Use the first matching requirement for verification
-	const paymentRequirements = requirements[0];
+	let lastError: PaymentError | null = null;
 
-	const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
+	for (let i = 0; i < requirements.length; i++) {
+		const req = requirements[i];
+		const facilitator = facilitators[i] ?? facilitators[0];
+		const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
 
-	// Verify
-	let verification: Awaited<ReturnType<typeof verifyPayment>>;
-	try {
-		verification = await verifyPayment(
-			paymentPayload,
-			paymentRequirements,
-			facilitator,
-		);
-	} catch (err) {
-		throw new PaymentError(
-			err instanceof Error
-				? err.message
-				: `Payment verification failed — unknown error (facilitator: ${facilitatorUrl})`,
-			402,
-		);
+		// Verify
+		let verification: Awaited<ReturnType<typeof verifyPayment>>;
+		try {
+			verification = await verifyPayment(paymentPayload, req, facilitator);
+		} catch (err) {
+			lastError = new PaymentError(
+				err instanceof Error
+					? err.message
+					: `Payment verification failed — unknown error (facilitator: ${facilitatorUrl})`,
+				402,
+			);
+			continue;
+		}
+		if (!verification.isValid) {
+			lastError = new PaymentError(
+				`Payment verification failed: ${verification.invalidReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
+				402,
+			);
+			continue;
+		}
+
+		// Settle — verification succeeded, so use this facilitator
+		let settlement: Awaited<ReturnType<typeof settlePayment>>;
+		try {
+			settlement = await settlePayment(paymentPayload, req, facilitator);
+		} catch (err) {
+			throw new PaymentError(
+				err instanceof Error
+					? err.message
+					: `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
+				502,
+			);
+		}
+		if (!settlement.success) {
+			throw new PaymentError(
+				`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
+				502,
+			);
+		}
+
+		const info = toSettlementInfo(settlement);
+		info.amount = req.maxAmountRequired;
+		return info;
 	}
-	if (!verification.isValid) {
-		throw new PaymentError(
-			`Payment verification failed: ${verification.invalidReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
-			402,
-		);
-	}
 
-	// Settle
-	let settlement: Awaited<ReturnType<typeof settlePayment>>;
-	try {
-		settlement = await settlePayment(
-			paymentPayload,
-			paymentRequirements,
-			facilitator,
-		);
-	} catch (err) {
-		throw new PaymentError(
-			err instanceof Error
-				? err.message
-				: `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
-			502,
-		);
-	}
-	if (!settlement.success) {
-		throw new PaymentError(
-			`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
-			502,
-		);
-	}
-
-	const info = toSettlementInfo(settlement);
-	info.amount = paymentRequirements.maxAmountRequired;
-
-	return info;
+	// All requirements failed verification
+	throw (
+		lastError ??
+		new PaymentError("Payment verification failed for all payment methods", 402)
+	);
 }
 
 export class PaymentError extends Error {

@@ -1,5 +1,10 @@
 // ── Config Types ──────────────────────────────────────────────────────────────
 
+export interface FacilitatorMapping {
+	default?: string;
+	chains?: Record<string, string>;
+}
+
 export interface TollboothConfig {
 	gateway: GatewayConfig;
 	wallets: Record<string, string>;
@@ -8,7 +13,7 @@ export interface TollboothConfig {
 	upstreams: Record<string, UpstreamConfig>;
 	routes: Record<string, RouteConfig>;
 	hooks?: GlobalHooksConfig;
-	facilitator?: string;
+	facilitator?: string | FacilitatorMapping;
 }
 
 export interface GatewayConfig {
@@ -52,7 +57,7 @@ export interface RouteConfig {
 	payTo?: string | PayToSplit[];
 	hooks?: RouteHooksConfig;
 	metadata?: Record<string, unknown>;
-	facilitator?: string;
+	facilitator?: string | FacilitatorMapping;
 	rateLimit?: RateLimitConfig;
 	models?: Record<string, string>;
 }
