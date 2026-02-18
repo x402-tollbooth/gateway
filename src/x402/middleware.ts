@@ -127,7 +127,9 @@ export async function processPayment(
 		);
 	} catch (err) {
 		throw new PaymentError(
-			err instanceof Error ? err.message : `Payment verification failed — unknown error (facilitator: ${facilitatorUrl})`,
+			err instanceof Error
+				? err.message
+				: `Payment verification failed — unknown error (facilitator: ${facilitatorUrl})`,
 			402,
 		);
 	}
@@ -148,7 +150,9 @@ export async function processPayment(
 		);
 	} catch (err) {
 		throw new PaymentError(
-			err instanceof Error ? err.message : `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
+			err instanceof Error
+				? err.message
+				: `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
 			502,
 		);
 	}

@@ -39,9 +39,7 @@ export async function verifyPayment(
 			body: JSON.stringify({ paymentPayload, paymentRequirements }),
 		});
 	} catch (err) {
-		throw new Error(
-			formatFetchError("verify", baseUrl, err),
-		);
+		throw new Error(formatFetchError("verify", baseUrl, err));
 	}
 
 	if (!response.ok) {
@@ -72,9 +70,7 @@ export async function settlePayment(
 			body: JSON.stringify({ paymentPayload, paymentRequirements }),
 		});
 	} catch (err) {
-		throw new Error(
-			formatFetchError("settle", baseUrl, err),
-		);
+		throw new Error(formatFetchError("settle", baseUrl, err));
 	}
 
 	if (!response.ok) {

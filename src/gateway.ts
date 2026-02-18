@@ -8,7 +8,7 @@ import {
 } from "./hooks/runner.js";
 import { resolvePrice } from "./pricing/resolver.js";
 import { bufferRequestBody, routeNeedsBody } from "./proxy/body-buffer.js";
-import { UpstreamError, proxyRequest } from "./proxy/proxy.js";
+import { proxyRequest, UpstreamError } from "./proxy/proxy.js";
 import { rewritePath } from "./router/rewriter.js";
 import { matchRoute } from "./router/router.js";
 import type {
@@ -310,9 +310,7 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 				fetch: handleRequest,
 			});
 			if (!options?.silent) {
-				console.log(
-					`⛩️  tollbooth running on http://localhost:${server.port}`,
-				);
+				console.log(`⛩️  tollbooth running on http://localhost:${server.port}`);
 				if (discoveryPayload) {
 					console.log(
 						`📡 discovery at http://localhost:${server.port}/.well-known/x402`,
