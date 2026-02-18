@@ -150,7 +150,7 @@ describe("DEFAULT_MODEL_PRICES", () => {
 	});
 
 	test("all prices are valid dollar format strings", () => {
-		for (const [model, price] of Object.entries(DEFAULT_MODEL_PRICES)) {
+		for (const [_model, price] of Object.entries(DEFAULT_MODEL_PRICES)) {
 			expect(price).toMatch(/^\$\d+\.\d+$/);
 		}
 	});
