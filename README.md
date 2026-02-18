@@ -223,6 +223,7 @@ The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed p
 ## Features
 
 - **YAML-first config** — define upstreams, routes, and pricing without code
+- **OpenAI-compatible mode** — auto-detect model from request body, built-in pricing table
 - **Dynamic pricing** — match on body fields, query params, headers with glob patterns
 - **Multiple upstreams** — proxy to different APIs from one gateway
 - **Custom pricing functions** — `fn:` escape hatch for complex pricing logic
@@ -257,6 +258,52 @@ routes:
 ```
 
 Route-level `facilitator` takes precedence over the top-level setting. If neither is specified, the default `https://x402.org/facilitator` is used.
+
+## OpenAI-Compatible Routes
+
+For proxying OpenAI-compatible APIs (OpenAI, OpenRouter, LiteLLM, Ollama, etc.), use `type: openai-compatible` to get automatic model-based pricing without writing match rules:
+
+```yaml
+upstreams:
+  openai:
+    url: "https://api.openai.com"
+    headers:
+      authorization: "Bearer ${OPENAI_API_KEY}"
+
+routes:
+  "POST /v1/chat/completions":
+    upstream: openai
+    type: openai-compatible
+
+  "POST /v1/completions":
+    upstream: openai
+    type: openai-compatible
+```
+
+The gateway auto-extracts the `model` field from the JSON request body and prices the request from a built-in table of common models (GPT-4o, Claude, Gemini, Llama, Mistral, DeepSeek, etc.).
+
+### Override or extend model pricing
+
+Add a `models` map to set custom prices or add models not in the default table:
+
+```yaml
+routes:
+  "POST /v1/chat/completions":
+    upstream: openai
+    type: openai-compatible
+    models:
+      gpt-4o: "$0.05"          # override default
+      gpt-4o-mini: "$0.005"    # override default
+      my-fine-tune: "$0.02"    # custom model
+    fallback: "$0.01"          # price for models not in any table
+```
+
+**Price resolution order:**
+1. `models` (your overrides) — exact match
+2. Built-in default table — exact match
+3. `price` / `fallback` / `defaults.price` — standard fallback chain
+
+Streaming responses (SSE) work out of the box — the gateway preserves the `ReadableStream` without buffering.
 
 ## Dynamic Pricing
 
@@ -424,6 +471,7 @@ src/
 ├── config/          # YAML loading, Zod validation, env interpolation
 ├── router/          # Route matching, param extraction, path rewriting
 ├── pricing/         # Price resolution (static, match, fn), unit conversion
+├── openai/          # OpenAI-compatible route handler, model extraction
 ├── x402/            # 402 responses, facilitator verify/settle, V2 headers
 ├── proxy/           # Upstream forwarding, lazy body buffering
 ├── hooks/           # Lifecycle hook loading and execution

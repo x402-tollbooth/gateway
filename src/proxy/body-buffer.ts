@@ -2,9 +2,13 @@ import type { RouteConfig } from "../types.js";
 
 /**
  * Check if a route needs the request body buffered for matching.
- * Only true if the route has match rules that reference body.* fields.
+ * True if:
+ * - The route has match rules that reference body.* fields
+ * - The route is type: openai-compatible (needs body to extract model)
  */
 export function routeNeedsBody(route: RouteConfig): boolean {
+	if (route.type === "openai-compatible") return true;
+
 	if (!route.match) return false;
 
 	return route.match.some((rule) =>

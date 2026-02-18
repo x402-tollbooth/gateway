@@ -7,6 +7,7 @@ import {
 	runOnSettled,
 } from "./hooks/runner.js";
 import { log } from "./logger.js";
+import { extractModel, resolveOpenAIPrice } from "./openai/handler.js";
 import { formatPrice } from "./pricing/parser.js";
 import { resolvePrice } from "./pricing/resolver.js";
 import { bufferRequestBody, routeNeedsBody } from "./proxy/body-buffer.js";
@@ -173,14 +174,38 @@ export function createGateway(
 			}
 
 			// ── Resolve price ────────────────────────────────────────────────
-			const price = await resolvePrice({
-				route,
-				config,
-				body: parsedBody,
-				query,
-				headers,
-				params,
-			});
+			let price: {
+				amount: bigint;
+				asset: string;
+				network: string;
+				payTo: string | import("./types.js").PayToSplit[];
+			};
+
+			if (route.type === "openai-compatible") {
+				const model = extractModel(parsedBody);
+				if (!model) {
+					return new Response(
+						JSON.stringify({
+							error: 'Missing or invalid "model" field in request body',
+							hint: 'openai-compatible routes require a "model" string in the JSON body',
+						}),
+						{
+							status: 400,
+							headers: { "Content-Type": "application/json" },
+						},
+					);
+				}
+				price = resolveOpenAIPrice(model, route, config);
+			} else {
+				price = await resolvePrice({
+					route,
+					config,
+					body: parsedBody,
+					query,
+					headers,
+					params,
+				});
+			}
 
 			// Determine upstream path
 			const upstreamPath = route.path

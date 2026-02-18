@@ -47,6 +47,7 @@ const routeHooksSchema = z
 
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
+	type: z.enum(["openai-compatible"]).optional(),
 	path: z.string().optional(),
 	price: z.union([z.string().min(1), pricingFnRefSchema]).optional(),
 	match: z.array(matchRuleSchema).optional(),
@@ -57,6 +58,7 @@ const routeConfigSchema = z.object({
 	metadata: z.record(z.unknown()).optional(),
 	facilitator: z.string().url().optional(),
 	rateLimit: rateLimitSchema.optional(),
+	models: z.record(z.string().min(1)).optional(),
 });
 
 const upstreamConfigSchema = z.object({

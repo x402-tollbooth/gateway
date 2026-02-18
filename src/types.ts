@@ -43,6 +43,7 @@ export interface UpstreamConfig {
 
 export interface RouteConfig {
 	upstream: string;
+	type?: "openai-compatible";
 	path?: string;
 	price?: string | PricingFnRef;
 	match?: MatchRule[];
@@ -53,6 +54,7 @@ export interface RouteConfig {
 	metadata?: Record<string, unknown>;
 	facilitator?: string;
 	rateLimit?: RateLimitConfig;
+	models?: Record<string, string>;
 }
 
 export interface MatchRule {
