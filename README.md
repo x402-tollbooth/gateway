@@ -96,6 +96,109 @@ This fires requests at tollbooth and prints the 402 responses. You should see di
 
 Since no real wallet is signing payments, every request gets a 402 back with the `PAYMENT-REQUIRED` header — which is exactly what we want to verify.
 
+## End-to-End Test with Real Payments
+
+Run a full payment cycle on Base Sepolia testnet: `GET /weather` → 402 → sign → pay → 200 with tx hash.
+
+### 1. Set up a wallet
+
+You need an Ethereum wallet and its private key. The simplest option is generating a dedicated test wallet:
+
+```bash
+# Using cast (install Foundry: https://getfoundry.sh)
+cast wallet new
+```
+
+Or use any wallet (MetaMask, Coinbase Wallet, etc.) and export the private key from its settings. Keep the key in a `.env` file — never commit it.
+
+```bash
+# .env
+WALLET_PRIVATE_KEY=abc123...    # hex, without 0x prefix
+WALLET_ADDRESS=0xYourAddress    # the same wallet's address
+```
+
+### 2. Get testnet USDC
+
+Your wallet needs USDC on Base Sepolia. The x402 facilitator sponsors gas, so you only need USDC — no ETH required.
+
+1. Go to the [Circle USDC Faucet](https://faucet.circle.com)
+2. Select **Base Sepolia** as the network
+3. Paste your wallet address and request USDC
+
+You'll receive testnet USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e` (the official Base Sepolia USDC contract).
+
+### 3. Install viem
+
+The e2e script uses [viem](https://viem.sh) for EIP-712 signing:
+
+```bash
+bun add viem
+```
+
+### 4. Run the test
+
+Open three terminals:
+
+**Terminal 1 — dummy upstream:**
+```bash
+bun run examples/dummy-api.ts
+```
+
+**Terminal 2 — tollbooth gateway:**
+```bash
+bun run --env-file=.env.test src/cli.ts start --config=examples/tollbooth.config.e2e.yaml
+```
+
+**Terminal 3 — e2e test:**
+```bash
+bun run --env-file=.env.test examples/e2e-payment.ts
+```
+
+### Expected output
+
+```
+🔑 Payer wallet:   0xYourAddress
+   Network:        Base Sepolia (chain 84532)
+   USDC contract:  0x036CbD53842c5426634e7929541eC2318f3dCF7e
+
+── Step 1: GET /weather (expect 402) ──
+✓ Got 402 with payment requirements:
+  scheme:             exact
+  network:            base-sepolia
+  asset:              USDC
+  maxAmountRequired:  1000 (0.001 USDC)
+  payTo:              0xYourAddress
+  maxTimeoutSeconds:  60
+
+── Step 2: Sign EIP-3009 transferWithAuthorization ──
+✓ Payment signed
+
+── Step 3: Resend GET /weather + payment-signature (expect 200) ──
+Status: 200
+
+── Step 4: Verify payment-response header ──
+
+✅ E2E test passed!
+──────────────────────────────────────────────────────────────
+  Tx hash:  0xabc123...
+  Network:  base-sepolia
+  Payer:    0xYourAddress
+  Amount:   1000 raw units
+──────────────────────────────────────────────────────────────
+
+🔗 View on Basescan: https://sepolia.basescan.org/tx/0xabc123...
+```
+
+### How signing works
+
+The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed permit for USDC that lets the facilitator pull payment from the payer's wallet without the payer broadcasting a transaction. The flow:
+
+1. Tollbooth returns a 402 with the `payment-required` header (base64-encoded requirements)
+2. The client signs a `TransferWithAuthorization` EIP-712 typed-data message
+3. The signed payload is sent back in the `payment-signature` header
+4. Tollbooth forwards it to `https://x402.org/facilitator`, which verifies the signature and settles the on-chain transfer
+5. Tollbooth proxies to the upstream and returns 200 with a `payment-response` header containing the tx hash
+
 ## Features
 
 - **YAML-first config** — define upstreams, routes, and pricing without code

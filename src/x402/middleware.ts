@@ -21,7 +21,26 @@ export interface PaymentRequirementsPayload {
 	payTo: string;
 	maxTimeoutSeconds: number;
 	asset: string;
+	// EIP-712 domain info required by the facilitator to verify the signature
+	extra?: { name: string; version: string };
 }
+
+// Token metadata keyed by "asset:network".
+// `address` is the on-chain contract address the facilitator needs for verification.
+// `eip712` is the EIP-712 domain info the facilitator uses to reconstruct typed data.
+const TOKEN_INFO: Record<
+	string,
+	{ address: string; eip712: { name: string; version: string } }
+> = {
+	"USDC:base-sepolia": {
+		address: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+		eip712: { name: "USDC", version: "2" },
+	},
+	"USDC:base": {
+		address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+		eip712: { name: "USD Coin", version: "2" },
+	},
+};
 
 /**
  * Build the payment requirements payload for a 402 response.
@@ -38,16 +57,21 @@ export function buildPaymentRequirements(
 			? price.payTo
 			: (price.payTo[0]?.address ?? "");
 
-	return accepts.map((accept) => ({
-		scheme: "exact",
-		network: accept.network,
-		maxAmountRequired: price.amount.toString(),
-		resource,
-		description,
-		payTo,
-		maxTimeoutSeconds: timeout,
-		asset: accept.asset,
-	}));
+	return accepts.map((accept) => {
+		const token = TOKEN_INFO[`${accept.asset}:${accept.network}`];
+		return {
+			scheme: "exact",
+			network: accept.network,
+			maxAmountRequired: price.amount.toString(),
+			resource,
+			description,
+			payTo,
+			maxTimeoutSeconds: timeout,
+			// Use the on-chain contract address; facilitator rejects human-readable names
+			asset: token?.address ?? accept.asset,
+			extra: token?.eip712,
+		};
+	});
 }
 
 /**
@@ -92,11 +116,15 @@ export async function processPayment(
 	const paymentRequirements = requirements[0];
 
 	// Verify
-	const verification = await verifyPayment(
-		paymentPayload,
-		paymentRequirements,
-		facilitator,
-	);
+	let verification: Awaited<ReturnType<typeof verifyPayment>>;
+	try {
+		verification = await verifyPayment(paymentPayload, paymentRequirements, facilitator);
+	} catch (err) {
+		throw new PaymentError(
+			`Payment verification error: ${err instanceof Error ? err.message : "unknown error"}`,
+			402,
+		);
+	}
 	if (!verification.isValid) {
 		throw new PaymentError(
 			`Payment verification failed: ${verification.invalidReason ?? "unknown reason"}`,
@@ -105,11 +133,15 @@ export async function processPayment(
 	}
 
 	// Settle
-	const settlement = await settlePayment(
-		paymentPayload,
-		paymentRequirements,
-		facilitator,
-	);
+	let settlement: Awaited<ReturnType<typeof settlePayment>>;
+	try {
+		settlement = await settlePayment(paymentPayload, paymentRequirements, facilitator);
+	} catch (err) {
+		throw new PaymentError(
+			`Payment settlement error: ${err instanceof Error ? err.message : "unknown error"}`,
+			502,
+		);
+	}
 	if (!settlement.success) {
 		throw new PaymentError(
 			`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}`,
