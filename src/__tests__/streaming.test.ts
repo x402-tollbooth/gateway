@@ -254,7 +254,7 @@ describe("SSE streaming — gateway integration", () => {
 		};
 
 		gateway = createGateway(config);
-		await gateway.start();
+		await gateway.start({ silent: true });
 
 		// ── Make request with a mock payment signature ───────────────────────
 		const paymentSig = btoa(
@@ -326,7 +326,7 @@ describe("SSE streaming — gateway integration", () => {
 		};
 
 		gateway = createGateway(config);
-		await gateway.start();
+		await gateway.start({ silent: true });
 
 		const paymentSig = btoa(
 			JSON.stringify({ x402Version: 2, payload: "mock" }),

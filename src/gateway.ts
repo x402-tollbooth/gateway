@@ -303,19 +303,21 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 		get config() {
 			return config;
 		},
-		async start() {
+		async start(options?: { silent?: boolean }) {
 			server = Bun.serve({
 				port: config.gateway.port,
 				hostname: config.gateway.hostname,
 				fetch: handleRequest,
 			});
-			console.log(
-				`⛩️  tollbooth running on http://localhost:${config.gateway.port}`,
-			);
-			if (discoveryPayload) {
+			if (!options?.silent) {
 				console.log(
-					`📡 discovery at http://localhost:${config.gateway.port}/.well-known/x402`,
+					`⛩️  tollbooth running on http://localhost:${server.port}`,
 				);
+				if (discoveryPayload) {
+					console.log(
+						`📡 discovery at http://localhost:${server.port}/.well-known/x402`,
+					);
+				}
 			}
 		},
 		async stop() {

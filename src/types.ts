@@ -178,7 +178,7 @@ export type PricingFn = (
 // ── Gateway ──────────────────────────────────────────────────────────────────
 
 export interface TollboothGateway {
-	start(): Promise<void>;
+	start(options?: { silent?: boolean }): Promise<void>;
 	stop(): Promise<void>;
 	readonly port: number;
 	readonly config: TollboothConfig;
