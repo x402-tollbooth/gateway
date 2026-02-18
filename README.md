@@ -100,42 +100,58 @@ Since no real wallet is signing payments, every request gets a 402 back with the
 
 Run a full payment cycle on Base Sepolia testnet: `GET /weather` → 402 → sign → pay → 200 with tx hash.
 
-### 1. Set up a wallet
+### 1. Set up two wallets
 
-You need an Ethereum wallet and its private key. The simplest option is generating a dedicated test wallet:
+You need two separate Ethereum wallets:
+
+- **Payer wallet** — the "buyer" that signs and pays for requests. Must hold testnet USDC.
+- **Gateway wallet** — the "seller" that receives USDC. Can be any address (no funds needed).
+
+The simplest way to create a dedicated test wallet for each:
 
 ```bash
 # Using cast (install Foundry: https://getfoundry.sh)
-cast wallet new
+cast wallet new   # run twice, use one as payer and one as gateway
 ```
 
-Or use any wallet (MetaMask, Coinbase Wallet, etc.) and export the private key from its settings. Keep the key in a `.env` file — never commit it.
+Or export keys from MetaMask, Coinbase Wallet, etc.
+
+### 2. Configure your env file
+
+Copy the example and fill in your values:
 
 ```bash
-# .env
-WALLET_PRIVATE_KEY=abc123...    # hex, without 0x prefix
-WALLET_ADDRESS=0xYourAddress    # the same wallet's address
+cp .env.test.example .env.test
 ```
 
-### 2. Get testnet USDC
+```bash
+# .env.test
 
-Your wallet needs USDC on Base Sepolia. The x402 facilitator sponsors gas, so you only need USDC — no ETH required.
+# Payer wallet (the "buyer") — needs testnet USDC
+TEST_PRIVATE_KEY=0x...          # private key of the payer wallet
+TEST_WALLET_ADDRESS=0x...       # public address of the payer wallet
+
+# Gateway wallet (the "seller") — receives USDC payments
+TEST_GATEWAY_ADDRESS=0x...      # must be a different address from TEST_WALLET_ADDRESS
+```
+
+> **Never commit `.env.test`** — it contains your private key. It's already in `.gitignore`.
+
+### 3. Get testnet USDC
+
+The payer wallet needs USDC on Base Sepolia. The x402 facilitator sponsors gas, so you only need USDC — no ETH required.
 
 1. Go to the [Circle USDC Faucet](https://faucet.circle.com)
 2. Select **Base Sepolia** as the network
-3. Paste your wallet address and request USDC
+3. Paste your **payer** wallet address (`TEST_WALLET_ADDRESS`) and request USDC
 
-You'll receive testnet USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e` (the official Base Sepolia USDC contract).
-
-### 3. Install viem
-
-The e2e script uses [viem](https://viem.sh) for EIP-712 signing:
-
-```bash
-bun add viem
-```
+You'll receive testnet USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e`.
 
 ### 4. Run the test
+
+```bash
+bun install   # installs viem and other deps
+```
 
 Open three terminals:
 
@@ -157,21 +173,26 @@ bun run --env-file=.env.test examples/e2e-payment.ts
 ### Expected output
 
 ```
-🔑 Payer wallet:   0xYourAddress
+🔑 Payer wallet:   0xYourPayerAddress
    Network:        Base Sepolia (chain 84532)
    USDC contract:  0x036CbD53842c5426634e7929541eC2318f3dCF7e
+   Gateway:        http://localhost:3000
 
 ── Step 1: GET /weather (expect 402) ──
 ✓ Got 402 with payment requirements:
   scheme:             exact
   network:            base-sepolia
-  asset:              USDC
+  asset:              0x036CbD53842c5426634e7929541eC2318f3dCF7e
   maxAmountRequired:  1000 (0.001 USDC)
-  payTo:              0xYourAddress
-  maxTimeoutSeconds:  60
+  payTo:              0xYourGatewayAddress
+  maxTimeoutSeconds:  300
 
 ── Step 2: Sign EIP-3009 transferWithAuthorization ──
-✓ Payment signed
+✓ Payment signed:
+  from:         0xYourPayerAddress
+  to:           0xYourGatewayAddress
+  value:        1000 (0.001 USDC)
+  ...
 
 ── Step 3: Resend GET /weather + payment-signature (expect 200) ──
 Status: 200
@@ -182,7 +203,7 @@ Status: 200
 ──────────────────────────────────────────────────────────────
   Tx hash:  0xabc123...
   Network:  base-sepolia
-  Payer:    0xYourAddress
+  Payer:    0xYourPayerAddress
   Amount:   1000 raw units
 ──────────────────────────────────────────────────────────────
 

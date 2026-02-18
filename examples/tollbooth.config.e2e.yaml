@@ -2,8 +2,8 @@
 #
 # E2E test configuration — uses real USDC payments on Base Sepolia testnet.
 #
-# Required env var (loaded from .env.test):
-#   TEST_WALLET_ADDRESS — the wallet address that receives USDC payments
+# Required env vars (loaded from .env.test):
+#   TEST_GATEWAY_ADDRESS — the wallet address that receives USDC payments
 #
 # Start tollbooth:
 #   bun run --env-file=.env.test src/cli.ts start --config=examples/tollbooth.config.e2e.yaml
