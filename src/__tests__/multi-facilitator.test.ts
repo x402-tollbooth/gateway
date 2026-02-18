@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { tollboothConfigSchema } from "../config/schema.js";
 import { generateDiscoveryMetadata } from "../discovery/metadata.js";
-import type { TollboothConfig } from "../types.js";
+import { createGateway } from "../gateway.js";
+import type { TollboothConfig, TollboothGateway } from "../types.js";
 import { resolveFacilitatorUrl } from "../x402/facilitator.js";
 
 // ── resolveFacilitatorUrl ──────────────────────────────────────────────────
@@ -93,6 +94,25 @@ describe("resolveFacilitatorUrl", () => {
 				chains: { "base/usdc": "https://base.example.com" },
 			}),
 		).toBe("https://base.example.com");
+	});
+
+	test("route mapping with unmatched chain and no default falls through to global", () => {
+		expect(
+			resolveFacilitatorUrl(
+				"ethereum",
+				"usdc",
+				{ chains: { "solana/usdc": "https://route-solana.example.com" } },
+				{
+					chains: {
+						"ethereum/usdc": "https://global-eth.example.com",
+					},
+				},
+			),
+		).toBe("https://global-eth.example.com");
+	});
+
+	test("empty mapping object falls through to hardcoded default", () => {
+		expect(resolveFacilitatorUrl("base", "usdc", {}, {})).toBe(HARDCODED);
 	});
 
 	test("full fallback chain: route chain → route default → global chain → global default → hardcoded", () => {
@@ -347,5 +367,252 @@ describe("multi-facilitator discovery metadata", () => {
 
 		// Top-level facilitator is the first accept's
 		expect(ep.facilitator).toBe("https://base.example.com");
+	});
+});
+
+// ── Gateway integration: multi-facilitator payment flow ─────────────────────
+
+function mockFacilitator(options: {
+	verify: (req: Request) => Response | Promise<Response>;
+	settle: (req: Request) => Response | Promise<Response>;
+}): ReturnType<typeof Bun.serve> {
+	return Bun.serve({
+		port: 0,
+		async fetch(req) {
+			const url = new URL(req.url);
+			if (url.pathname === "/verify") return options.verify(req);
+			if (url.pathname === "/settle") return options.settle(req);
+			return new Response("Not found", { status: 404 });
+		},
+	});
+}
+
+function alwaysApprove(network: string) {
+	return mockFacilitator({
+		verify: () => Response.json({ isValid: true, payer: "0xabc" }),
+		settle: () =>
+			Response.json({
+				success: true,
+				payer: "0xabc",
+				transaction: "0xtx",
+				network,
+			}),
+	});
+}
+
+function alwaysReject() {
+	return mockFacilitator({
+		verify: () =>
+			Response.json({ isValid: false, invalidReason: "wrong network" }),
+		settle: () => Response.json({ success: false }),
+	});
+}
+
+describe("multi-facilitator gateway integration", () => {
+	let upstream: ReturnType<typeof Bun.serve>;
+	let facilitator1: ReturnType<typeof Bun.serve>;
+	let facilitator2: ReturnType<typeof Bun.serve>;
+	let gateway: TollboothGateway;
+
+	afterEach(async () => {
+		await gateway?.stop();
+		upstream?.stop();
+		facilitator1?.stop();
+		facilitator2?.stop();
+	});
+
+	const paymentSig = btoa(
+		JSON.stringify({ x402Version: 2, payload: "mock" }),
+	);
+
+	test("payment succeeds when second facilitator verifies", async () => {
+		upstream = Bun.serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		// First facilitator rejects, second accepts
+		facilitator1 = alwaysReject();
+		facilitator2 = alwaysApprove("solana");
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { base: "0xtest", solana: "0xtest" },
+			accepts: [
+				{ asset: "USDC", network: "base" },
+				{ asset: "USDC", network: "solana" },
+			],
+			defaults: { price: "$0.001", timeout: 60 },
+			facilitator: {
+				chains: {
+					"base/usdc": `http://localhost:${facilitator1.port}`,
+					"solana/usdc": `http://localhost:${facilitator2.port}`,
+				},
+			},
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: { "GET /test": { upstream: "api", price: "$0.01" } },
+		};
+
+		gateway = createGateway(config);
+		await gateway.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${gateway.port}/test`, {
+			headers: { "payment-signature": paymentSig },
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("payment-response")).toBeTruthy();
+	});
+
+	test("payment fails when all facilitators reject", async () => {
+		upstream = Bun.serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		facilitator1 = alwaysReject();
+		facilitator2 = alwaysReject();
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { base: "0xtest", solana: "0xtest" },
+			accepts: [
+				{ asset: "USDC", network: "base" },
+				{ asset: "USDC", network: "solana" },
+			],
+			defaults: { price: "$0.001", timeout: 60 },
+			facilitator: {
+				chains: {
+					"base/usdc": `http://localhost:${facilitator1.port}`,
+					"solana/usdc": `http://localhost:${facilitator2.port}`,
+				},
+			},
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: { "GET /test": { upstream: "api", price: "$0.01" } },
+		};
+
+		gateway = createGateway(config);
+		await gateway.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${gateway.port}/test`, {
+			headers: { "payment-signature": paymentSig },
+		});
+
+		expect(res.status).toBe(402);
+	});
+
+	test("settlement failure does not try next facilitator", async () => {
+		upstream = Bun.serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		// Verifies OK but settlement fails
+		facilitator1 = mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
+			settle: () =>
+				Response.json({
+					success: false,
+					errorReason: "insufficient funds",
+				}),
+		});
+		// Would succeed — but should never be reached
+		facilitator2 = alwaysApprove("solana");
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { base: "0xtest", solana: "0xtest" },
+			accepts: [
+				{ asset: "USDC", network: "base" },
+				{ asset: "USDC", network: "solana" },
+			],
+			defaults: { price: "$0.001", timeout: 60 },
+			facilitator: {
+				chains: {
+					"base/usdc": `http://localhost:${facilitator1.port}`,
+					"solana/usdc": `http://localhost:${facilitator2.port}`,
+				},
+			},
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: { "GET /test": { upstream: "api", price: "$0.01" } },
+		};
+
+		gateway = createGateway(config);
+		await gateway.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${gateway.port}/test`, {
+			headers: { "payment-signature": paymentSig },
+		});
+
+		// Settlement failure → 502, not retried with next facilitator
+		expect(res.status).toBe(502);
+	});
+
+	test("single facilitator still works (backward compat)", async () => {
+		upstream = Bun.serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		facilitator1 = alwaysApprove("base-sepolia");
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { "base-sepolia": "0xtest" },
+			accepts: [{ asset: "USDC", network: "base-sepolia" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			facilitator: `http://localhost:${facilitator1.port}`,
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: { "GET /test": { upstream: "api", price: "$0.01" } },
+		};
+
+		gateway = createGateway(config);
+		await gateway.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${gateway.port}/test`, {
+			headers: { "payment-signature": paymentSig },
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("payment-response")).toBeTruthy();
+	});
+
+	test("no payment header returns 402 with per-chain facilitators in discovery", async () => {
+		upstream = Bun.serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		facilitator1 = alwaysApprove("base");
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: true },
+			wallets: { base: "0xtest" },
+			accepts: [{ asset: "USDC", network: "base" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			facilitator: {
+				chains: {
+					"base/usdc": `http://localhost:${facilitator1.port}`,
+				},
+			},
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: { "GET /test": { upstream: "api", price: "$0.01" } },
+		};
+
+		gateway = createGateway(config);
+		await gateway.start({ silent: true });
+
+		// No payment header → 402
+		const res = await fetch(`http://localhost:${gateway.port}/test`);
+		expect(res.status).toBe(402);
+
+		// Discovery shows per-chain facilitator
+		const discovery = await fetch(
+			`http://localhost:${gateway.port}/.well-known/x402`,
+		);
+		const meta = await discovery.json();
+		expect(meta.endpoints[0].accepts[0].facilitator).toBe(
+			`http://localhost:${facilitator1.port}`,
+		);
 	});
 });
