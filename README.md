@@ -43,6 +43,41 @@ npx tollbooth start
 
 That's it. `GET /data` now requires an x402 payment of $0.01 USDC.
 
+## Docker
+
+Run tollbooth without installing Bun — just mount your config:
+
+```bash
+docker run -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
+  ghcr.io/loa212/x402-tollbooth:latest
+```
+
+Pass a custom port or config path:
+
+```bash
+docker run -p 8080:8080 \
+  -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
+  ghcr.io/loa212/x402-tollbooth:latest \
+  start --config=/app/tollbooth.config.yaml --port=8080
+```
+
+Use env vars for secrets:
+
+```bash
+docker run -p 3000:3000 \
+  -e API_KEY=sk-... \
+  -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
+  ghcr.io/loa212/x402-tollbooth:latest
+```
+
+### Available tags
+
+| Tag | Description |
+| --- | --- |
+| `latest` | Latest build from `main` |
+| `0.4.0` / `0.4` | Specific release version |
+| `<sha>` | Specific commit |
+
 ## Local Development
 
 Try tollbooth locally with a dummy API — no wallets or real payments needed.
