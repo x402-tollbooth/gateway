@@ -118,7 +118,11 @@ export async function processPayment(
 	// Verify
 	let verification: Awaited<ReturnType<typeof verifyPayment>>;
 	try {
-		verification = await verifyPayment(paymentPayload, paymentRequirements, facilitator);
+		verification = await verifyPayment(
+			paymentPayload,
+			paymentRequirements,
+			facilitator,
+		);
 	} catch (err) {
 		throw new PaymentError(
 			`Payment verification error: ${err instanceof Error ? err.message : "unknown error"}`,
@@ -135,7 +139,11 @@ export async function processPayment(
 	// Settle
 	let settlement: Awaited<ReturnType<typeof settlePayment>>;
 	try {
-		settlement = await settlePayment(paymentPayload, paymentRequirements, facilitator);
+		settlement = await settlePayment(
+			paymentPayload,
+			paymentRequirements,
+			facilitator,
+		);
 	} catch (err) {
 		throw new PaymentError(
 			`Payment settlement error: ${err instanceof Error ? err.message : "unknown error"}`,
