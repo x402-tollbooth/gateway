@@ -72,11 +72,20 @@ docker run -p 3000:3000 \
 
 ### Available tags
 
-| Tag | Description |
-| --- | --- |
-| `latest` | Latest build from `main` |
+| Tag             | Description              |
+| --------------- | ------------------------ |
+| `latest`        | Latest build from `main` |
 | `0.4.0` / `0.4` | Specific release version |
-| `<sha>` | Specific commit |
+| `<sha>`         | Specific commit          |
+
+## Deploy
+
+| Platform                       | Guide                                  | Notes                                      |
+| ------------------------------ | -------------------------------------- | ------------------------------------------ |
+| [Fly.io](https://fly.io)       | [Deploy guide](docs/deploy/fly-io.md)  | `fly.toml` template, scale-to-zero support |
+| [Railway](https://railway.com) | [Deploy guide](docs/deploy/railway.md) | Docker-based, auto-deploy from GitHub      |
+
+All guides use the published Docker image (`ghcr.io/loa212/x402-tollbooth`). You can also deploy on any platform that runs Docker containers.
 
 ## Local Development
 
@@ -191,16 +200,19 @@ bun install   # installs viem and other deps
 Open three terminals:
 
 **Terminal 1 — dummy upstream:**
+
 ```bash
 bun run examples/dummy-api.ts
 ```
 
 **Terminal 2 — tollbooth gateway:**
+
 ```bash
 bun run --env-file=.env.test src/cli.ts start --config=examples/tollbooth.config.e2e.yaml
 ```
 
 **Terminal 3 — e2e test:**
+
 ```bash
 bun run --env-file=.env.test examples/e2e-payment.ts
 ```
@@ -289,7 +301,7 @@ routes:
   "POST /special":
     upstream: myapi
     price: "$0.05"
-    facilitator: https://other-facilitator.example.com  # per-route override
+    facilitator: https://other-facilitator.example.com # per-route override
 ```
 
 Route-level `facilitator` takes precedence over the top-level setting. If neither is specified, the default `https://x402.org/facilitator` is used.
@@ -327,13 +339,14 @@ routes:
     upstream: openai
     type: openai-compatible
     models:
-      gpt-4o: "$0.05"          # override default
-      gpt-4o-mini: "$0.005"    # override default
-      my-fine-tune: "$0.02"    # custom model
-    fallback: "$0.01"          # price for models not in any table
+      gpt-4o: "$0.05" # override default
+      gpt-4o-mini: "$0.005" # override default
+      my-fine-tune: "$0.02" # custom model
+    fallback: "$0.01" # price for models not in any table
 ```
 
 **Price resolution order:**
+
 1. `models` (your overrides) — exact match
 2. Built-in default table — exact match
 3. `price` / `fallback` / `defaults.price` — standard fallback chain
