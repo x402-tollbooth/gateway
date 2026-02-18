@@ -41,10 +41,17 @@ export async function proxyRequest(
 		}
 	}
 
+	// Use an AbortController with a manual timeout so we can clear it once
+	// response headers arrive. This prevents long-running streams (SSE) from
+	// being killed by the connection timeout.
+	const controller = new AbortController();
+	const timeoutMs = upstream.timeout ?? 30_000;
+	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
 	const init: RequestInit = {
 		method: originalRequest.method,
 		headers,
-		signal: AbortSignal.timeout(upstream.timeout ?? 30_000),
+		signal: controller.signal,
 	};
 
 	// Attach body for non-GET/HEAD requests
@@ -52,7 +59,13 @@ export async function proxyRequest(
 		init.body = body;
 	}
 
-	const response = await fetch(url.toString(), init);
+	let response: Response;
+	try {
+		response = await fetch(url.toString(), init);
+	} finally {
+		// Clear timeout once headers arrive — body can now stream without limit.
+		clearTimeout(timeoutId);
+	}
 
 	// Convert to our response type
 	const responseHeaders: Record<string, string> = {};

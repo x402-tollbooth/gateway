@@ -222,6 +222,14 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 				encodePaymentResponse(settlement),
 			);
 
+			// Ensure SSE-friendly headers for streaming responses
+			const contentType = finalResponse.headers["content-type"] ?? "";
+			if (contentType.includes("text/event-stream")) {
+				if (!responseHeaders.has("cache-control")) {
+					responseHeaders.set("cache-control", "no-cache");
+				}
+			}
+
 			return new Response(
 				finalResponse.body as string | ReadableStream | null,
 				{
@@ -274,7 +282,7 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 
 	return {
 		get port() {
-			return config.gateway.port;
+			return server?.port ?? config.gateway.port;
 		},
 		get config() {
 			return config;
