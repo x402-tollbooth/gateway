@@ -115,6 +115,8 @@ export async function processPayment(
 	// Use the first matching requirement for verification
 	const paymentRequirements = requirements[0];
 
+	const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
+
 	// Verify
 	let verification: Awaited<ReturnType<typeof verifyPayment>>;
 	try {
@@ -125,13 +127,13 @@ export async function processPayment(
 		);
 	} catch (err) {
 		throw new PaymentError(
-			`Payment verification error: ${err instanceof Error ? err.message : "unknown error"}`,
+			err instanceof Error ? err.message : `Payment verification failed — unknown error (facilitator: ${facilitatorUrl})`,
 			402,
 		);
 	}
 	if (!verification.isValid) {
 		throw new PaymentError(
-			`Payment verification failed: ${verification.invalidReason ?? "unknown reason"}`,
+			`Payment verification failed: ${verification.invalidReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
 			402,
 		);
 	}
@@ -146,13 +148,13 @@ export async function processPayment(
 		);
 	} catch (err) {
 		throw new PaymentError(
-			`Payment settlement error: ${err instanceof Error ? err.message : "unknown error"}`,
+			err instanceof Error ? err.message : `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
 			502,
 		);
 	}
 	if (!settlement.success) {
 		throw new PaymentError(
-			`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}`,
+			`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
 			502,
 		);
 	}

@@ -28,17 +28,25 @@ export async function verifyPayment(
 	paymentRequirements: unknown,
 	facilitator?: FacilitatorConfig,
 ): Promise<VerifyResult> {
-	const url = `${facilitator?.url ?? DEFAULT_FACILITATOR}/verify`;
+	const baseUrl = facilitator?.url ?? DEFAULT_FACILITATOR;
+	const url = `${baseUrl}/verify`;
 
-	const response = await fetch(url, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ paymentPayload, paymentRequirements }),
-	});
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ paymentPayload, paymentRequirements }),
+		});
+	} catch (err) {
+		throw new Error(
+			formatFetchError("verify", baseUrl, err),
+		);
+	}
 
 	if (!response.ok) {
 		throw new Error(
-			`Facilitator verify failed: ${response.status} ${response.statusText}`,
+			formatHttpError("verify", baseUrl, response.status, response.statusText),
 		);
 	}
 
@@ -53,21 +61,57 @@ export async function settlePayment(
 	paymentRequirements: unknown,
 	facilitator?: FacilitatorConfig,
 ): Promise<SettleResult> {
-	const url = `${facilitator?.url ?? DEFAULT_FACILITATOR}/settle`;
+	const baseUrl = facilitator?.url ?? DEFAULT_FACILITATOR;
+	const url = `${baseUrl}/settle`;
 
-	const response = await fetch(url, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ paymentPayload, paymentRequirements }),
-	});
+	let response: Response;
+	try {
+		response = await fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ paymentPayload, paymentRequirements }),
+		});
+	} catch (err) {
+		throw new Error(
+			formatFetchError("settle", baseUrl, err),
+		);
+	}
 
 	if (!response.ok) {
 		throw new Error(
-			`Facilitator settle failed: ${response.status} ${response.statusText}`,
+			formatHttpError("settle", baseUrl, response.status, response.statusText),
 		);
 	}
 
 	return (await response.json()) as SettleResult;
+}
+
+function formatHttpError(
+	operation: string,
+	url: string,
+	status: number,
+	statusText: string,
+): string {
+	const suggestion =
+		status >= 500
+			? `Check that the facilitator at ${url} is reachable`
+			: `Facilitator rejected the request — verify your payment configuration`;
+	return `Facilitator ${operation} failed (${status} ${statusText})\n  → ${suggestion}`;
+}
+
+function formatFetchError(
+	operation: string,
+	url: string,
+	err: unknown,
+): string {
+	const message = err instanceof Error ? err.message : "unknown error";
+	if (message.includes("ECONNREFUSED") || message.includes("fetch failed")) {
+		return `Facilitator ${operation} failed — could not connect to ${url}\n  → Check that the facilitator URL is correct and the server is running`;
+	}
+	if (message.includes("ENOTFOUND") || message.includes("getaddrinfo")) {
+		return `Facilitator ${operation} failed — DNS lookup failed for ${url}\n  → Check that the facilitator URL is correct`;
+	}
+	return `Facilitator ${operation} failed — ${message}\n  → Check that the facilitator at ${url} is reachable`;
 }
 
 /**

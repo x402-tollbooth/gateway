@@ -1,5 +1,15 @@
 import type { UpstreamConfig, UpstreamResponse } from "../types.js";
 
+export class UpstreamError extends Error {
+	constructor(
+		message: string,
+		public readonly upstreamUrl: string,
+	) {
+		super(message);
+		this.name = "UpstreamError";
+	}
+}
+
 /**
  * Forward a request to an upstream API.
  */
@@ -8,6 +18,7 @@ export async function proxyRequest(
 	upstreamPath: string,
 	originalRequest: Request,
 	body?: ArrayBuffer,
+	upstreamName?: string,
 ): Promise<UpstreamResponse> {
 	const url = new URL(upstreamPath, upstream.url);
 
@@ -59,9 +70,30 @@ export async function proxyRequest(
 		init.body = body;
 	}
 
+	const label = upstreamName ? `"${upstreamName}"` : upstream.url;
+
 	let response: Response;
 	try {
 		response = await fetch(url.toString(), init);
+	} catch (err) {
+		clearTimeout(timeoutId);
+		if (err instanceof DOMException && err.name === "AbortError") {
+			throw new UpstreamError(
+				`Upstream ${label} timed out after ${timeoutMs / 1000}s (${upstream.url})`,
+				upstream.url,
+			);
+		}
+		const msg = err instanceof Error ? err.message : "unknown error";
+		if (msg.includes("ECONNREFUSED") || msg.includes("fetch failed")) {
+			throw new UpstreamError(
+				`Upstream ${label} is unreachable (${upstream.url})\n  → Check that the upstream server is running`,
+				upstream.url,
+			);
+		}
+		throw new UpstreamError(
+			`Upstream ${label} error: ${msg} (${upstream.url})`,
+			upstream.url,
+		);
 	} finally {
 		// Clear timeout once headers arrive — body can now stream without limit.
 		clearTimeout(timeoutId);

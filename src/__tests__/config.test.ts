@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { interpolateEnv } from "../config/env.js";
+import { loadConfig } from "../config/loader.js";
 import { tollboothConfigSchema } from "../config/schema.js";
 
 describe("interpolateEnv", () => {
@@ -165,6 +166,60 @@ describe("tollboothConfigSchema", () => {
 		expect(result.success).toBe(true);
 		if (result.success) {
 			expect(result.data.facilitator).toBeUndefined();
+		}
+	});
+});
+
+describe("loadConfig error formatting", () => {
+	test("formats missing required field with suggestion", () => {
+		expect(() => loadConfig("/dev/null")).toThrow(/Invalid tollbooth config/);
+	});
+
+	test("formats invalid URL with suggestion", () => {
+		const { mkdtempSync, writeFileSync } = require("node:fs");
+		const { join } = require("node:path");
+		const dir = mkdtempSync(join(require("node:os").tmpdir(), "tb-"));
+		const file = join(dir, "tollbooth.config.json");
+		writeFileSync(
+			file,
+			JSON.stringify({
+				wallets: { base: "0xtest" },
+				accepts: [{ asset: "USDC", network: "base" }],
+				upstreams: { api: { url: "not-a-url" } },
+				routes: { "GET /test": { upstream: "api" } },
+			}),
+		);
+		try {
+			loadConfig(file);
+		} catch (e: unknown) {
+			const msg = (e as Error).message;
+			expect(msg).toContain("upstreams.api.url");
+			expect(msg).toContain("→");
+			expect(msg).toContain("valid URL");
+		}
+	});
+
+	test("formats empty accepts array with suggestion", () => {
+		const { mkdtempSync, writeFileSync } = require("node:fs");
+		const { join } = require("node:path");
+		const dir = mkdtempSync(join(require("node:os").tmpdir(), "tb-"));
+		const file = join(dir, "tollbooth.config.json");
+		writeFileSync(
+			file,
+			JSON.stringify({
+				wallets: { base: "0xtest" },
+				accepts: [],
+				upstreams: { api: { url: "https://api.example.com" } },
+				routes: { "GET /test": { upstream: "api" } },
+			}),
+		);
+		try {
+			loadConfig(file);
+		} catch (e: unknown) {
+			const msg = (e as Error).message;
+			expect(msg).toContain("accepts");
+			expect(msg).toContain("→");
+			expect(msg).toContain("at least");
 		}
 	});
 });

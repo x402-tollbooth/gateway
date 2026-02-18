@@ -76,24 +76,51 @@ describe("matchRoute", () => {
 
 	test("matches static route", () => {
 		const result = matchRoute("POST", "/ai/claude", config);
-		expect(result).toBeDefined();
-		expect(result?.routeKey).toBe("POST /ai/claude");
-		expect(result?.upstream.url).toBe("https://api.anthropic.com");
+		expect(result.matched).toBe(true);
+		if (result.matched) {
+			expect(result.routeKey).toBe("POST /ai/claude");
+			expect(result.upstream.url).toBe("https://api.anthropic.com");
+		}
 	});
 
 	test("matches parameterized route", () => {
 		const result = matchRoute("GET", "/data/dune/12345", config);
-		expect(result).toBeDefined();
-		expect(result?.params.query_id).toBe("12345");
+		expect(result.matched).toBe(true);
+		if (result.matched) {
+			expect(result.params.query_id).toBe("12345");
+		}
 	});
 
-	test("returns undefined for unmatched path", () => {
+	test("returns diagnostics for unmatched path", () => {
 		const result = matchRoute("GET", "/unknown", config);
-		expect(result).toBeUndefined();
+		expect(result.matched).toBe(false);
+		if (!result.matched) {
+			expect(result.checked).toContain("POST /ai/claude");
+			expect(result.checked).toContain("GET /data/dune/:query_id");
+		}
 	});
 
-	test("returns undefined for wrong method", () => {
+	test("returns diagnostics for wrong method", () => {
 		const result = matchRoute("GET", "/ai/claude", config);
-		expect(result).toBeUndefined();
+		expect(result.matched).toBe(false);
+		if (!result.matched) {
+			expect(result.checked.length).toBe(2);
+		}
+	});
+
+	test("suggests close route match", () => {
+		const result = matchRoute("POST", "/ai/claud", config);
+		expect(result.matched).toBe(false);
+		if (!result.matched) {
+			expect(result.suggestion).toBe("POST /ai/claude");
+		}
+	});
+
+	test("does not suggest when distance is too large", () => {
+		const result = matchRoute("DELETE", "/completely/different/path", config);
+		expect(result.matched).toBe(false);
+		if (!result.matched) {
+			expect(result.suggestion).toBeUndefined();
+		}
 	});
 });

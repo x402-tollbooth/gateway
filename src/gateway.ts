@@ -8,7 +8,7 @@ import {
 } from "./hooks/runner.js";
 import { resolvePrice } from "./pricing/resolver.js";
 import { bufferRequestBody, routeNeedsBody } from "./proxy/body-buffer.js";
-import { proxyRequest } from "./proxy/proxy.js";
+import { UpstreamError, proxyRequest } from "./proxy/proxy.js";
 import { rewritePath } from "./router/rewriter.js";
 import { matchRoute } from "./router/router.js";
 import type {
@@ -53,15 +53,23 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 		}
 
 		// Match route
-		const matched = matchRoute(request.method, url.pathname, config);
-		if (!matched) {
-			return new Response(JSON.stringify({ error: "Not found" }), {
+		const result = matchRoute(request.method, url.pathname, config);
+		if (!result.matched) {
+			const requested = `${request.method.toUpperCase()} ${url.pathname}`;
+			const detail: Record<string, unknown> = {
+				error: `Route not found: ${requested}`,
+				checked: result.checked,
+			};
+			if (result.suggestion) {
+				detail.suggestion = `Did you mean ${result.suggestion}?`;
+			}
+			return new Response(JSON.stringify(detail), {
 				status: 404,
 				headers: { "Content-Type": "application/json" },
 			});
 		}
 
-		const { routeKey, route, upstream, params } = matched;
+		const { routeKey, route, upstream, params } = result;
 
 		// Parse query
 		const query: Record<string, string> = {};
@@ -199,6 +207,7 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 				upstreamPath,
 				request,
 				rawBody,
+				route.upstream,
 			);
 
 			// ── Hook: onResponse ─────────────────────────────────────────────
@@ -242,6 +251,13 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 			if (error instanceof PaymentError) {
 				return new Response(JSON.stringify({ error: error.message }), {
 					status: error.statusCode,
+					headers: { "Content-Type": "application/json" },
+				});
+			}
+
+			if (error instanceof UpstreamError) {
+				return new Response(JSON.stringify({ error: error.message }), {
+					status: 502,
 					headers: { "Content-Type": "application/json" },
 				});
 			}
