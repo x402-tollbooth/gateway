@@ -2,6 +2,7 @@
 
 import { loadConfig } from "./config/loader.js";
 import { createGateway } from "./gateway.js";
+import { runInit } from "./init.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "start";
@@ -23,6 +24,11 @@ switch (command) {
 			);
 			process.exit(1);
 		}
+		break;
+	}
+
+	case "init": {
+		await runInit();
 		break;
 	}
 
@@ -50,6 +56,7 @@ switch (command) {
 ⛩️  tollbooth — Turn any API into a paid x402 API
 
 Usage:
+  tollbooth init                     Generate a config file interactively
   tollbooth start [--config=path]    Start the gateway
   tollbooth dev [--config=path]      Start in dev mode (with watch)
   tollbooth validate [--config=path] Validate config without starting
