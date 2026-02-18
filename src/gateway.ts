@@ -6,6 +6,8 @@ import {
 	runOnResponse,
 	runOnSettled,
 } from "./hooks/runner.js";
+import { log } from "./logger.js";
+import { formatPrice } from "./pricing/parser.js";
 import { resolvePrice } from "./pricing/resolver.js";
 import { bufferRequestBody, routeNeedsBody } from "./proxy/body-buffer.js";
 import { proxyRequest, UpstreamError } from "./proxy/proxy.js";
@@ -36,6 +38,7 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 		: null;
 
 	async function handleRequest(request: Request): Promise<Response> {
+		const start = performance.now();
 		const url = new URL(request.url);
 
 		// Discovery endpoint
@@ -63,6 +66,11 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 			if (result.suggestion) {
 				detail.suggestion = `Did you mean ${result.suggestion}?`;
 			}
+			log.warn("route_not_found", {
+				method: request.method,
+				path: url.pathname,
+				status: 404,
+			});
 			return new Response(JSON.stringify(detail), {
 				status: 404,
 				headers: { "Content-Type": "application/json" },
@@ -181,6 +189,14 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 
 			tollboothReq.payer = settlement.payer;
 
+			log.info("payment_settled", {
+				payer: settlement.payer,
+				tx_hash: settlement.transaction,
+				amount: settlement.amount,
+				asset: price.asset,
+				network: price.network,
+			});
+
 			// ── Hook: onSettled ───────────────────────────────────────────────
 			const onSettledResult = await runOnSettled(
 				{ req: tollboothReq, route: resolvedRoute, settlement },
@@ -239,6 +255,16 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 				}
 			}
 
+			const duration_ms = Math.round(performance.now() - start);
+			log.info("request", {
+				method: request.method,
+				path: url.pathname,
+				route: routeKey,
+				price: formatPrice(price.amount, price.asset),
+				duration_ms,
+				status: finalResponse.status,
+			});
+
 			return new Response(
 				finalResponse.body as string | ReadableStream | null,
 				{
@@ -249,6 +275,14 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 		} catch (error) {
 			// ── Hook: onError ────────────────────────────────────────────────
 			if (error instanceof PaymentError) {
+				log.warn("payment_failed", {
+					method: request.method,
+					path: url.pathname,
+					route: routeKey,
+					status: error.statusCode,
+					error: error.message,
+					duration_ms: Math.round(performance.now() - start),
+				});
 				return new Response(JSON.stringify({ error: error.message }), {
 					status: error.statusCode,
 					headers: { "Content-Type": "application/json" },
@@ -256,6 +290,14 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 			}
 
 			if (error instanceof UpstreamError) {
+				log.error("upstream_error", {
+					method: request.method,
+					path: url.pathname,
+					route: routeKey,
+					upstream: error.upstreamUrl,
+					error: error.message,
+					duration_ms: Math.round(performance.now() - start),
+				});
 				return new Response(JSON.stringify({ error: error.message }), {
 					status: 502,
 					headers: { "Content-Type": "application/json" },
@@ -276,13 +318,23 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 				routeKey,
 			};
 
+			const errMsg = error instanceof Error ? error.message : "Unknown error";
+
+			log.error("internal_error", {
+				method: request.method,
+				path: url.pathname,
+				route: routeKey,
+				error: errMsg,
+				duration_ms: Math.round(performance.now() - start),
+			});
+
 			await runOnError(
 				{
 					req: tollboothReq,
 					route: resolvedRoute,
 					error: {
 						status: 500,
-						message: error instanceof Error ? error.message : "Unknown error",
+						message: errMsg,
 					},
 				},
 				route.hooks,
@@ -310,12 +362,15 @@ export function createGateway(config: TollboothConfig): TollboothGateway {
 				fetch: handleRequest,
 			});
 			if (!options?.silent) {
-				console.log(`⛩️  tollbooth running on http://localhost:${server.port}`);
-				if (discoveryPayload) {
-					console.log(
-						`📡 discovery at http://localhost:${server.port}/.well-known/x402`,
-					);
-				}
+				log.info("started", {
+					url: `http://localhost:${server.port}`,
+					port: server.port,
+					...(discoveryPayload
+						? {
+								discovery: `http://localhost:${server.port}/.well-known/x402`,
+							}
+						: {}),
+				});
 			}
 		},
 		async stop() {

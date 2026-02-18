@@ -3,6 +3,7 @@ import { extname, resolve } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parse as parseYaml, stringify as toYaml } from "yaml";
 import { tollboothConfigSchema } from "./config/schema.js";
+import { log } from "./logger.js";
 
 const rl = createInterface({
 	input: process.stdin,
@@ -140,7 +141,9 @@ export async function runInit() {
 		const issues = result.error.issues
 			.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
 			.join("\n");
-		console.error(`\n❌ Generated config is invalid:\n${issues}`);
+		log.error("config_invalid", {
+			error: `Generated config is invalid:\n${issues}`,
+		});
 		process.exit(1);
 	}
 
@@ -209,7 +212,7 @@ export function extractOperations(
 function parseSpecFile(filePath: string): Record<string, unknown> {
 	const abs = resolve(process.cwd(), filePath);
 	if (!existsSync(abs)) {
-		console.error(`❌ File not found: ${filePath}`);
+		log.error("file_not_found", { path: filePath });
 		process.exit(1);
 	}
 	const raw = readFileSync(abs, "utf-8");
@@ -224,13 +227,15 @@ export async function runInitFromOpenAPI(specPath: string) {
 	// ── Validate OpenAPI version ─────────────────────────────────────────────
 	const version = spec.openapi as string | undefined;
 	if (!version?.startsWith("3.")) {
-		console.error("❌ Only OpenAPI 3.x specs are supported.");
+		log.error("unsupported_spec", {
+			error: "Only OpenAPI 3.x specs are supported",
+		});
 		process.exit(1);
 	}
 
 	const ops = extractOperations(spec);
 	if (ops.length === 0) {
-		console.error("❌ No operations found in the spec.");
+		log.error("empty_spec", { error: "No operations found in the spec" });
 		process.exit(1);
 	}
 
@@ -325,7 +330,9 @@ export async function runInitFromOpenAPI(specPath: string) {
 		const issues = result.error.issues
 			.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
 			.join("\n");
-		console.error(`\n❌ Generated config is invalid:\n${issues}`);
+		log.error("config_invalid", {
+			error: `Generated config is invalid:\n${issues}`,
+		});
 		process.exit(1);
 	}
 

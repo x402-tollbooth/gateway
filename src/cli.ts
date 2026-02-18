@@ -3,6 +3,7 @@
 import { loadConfig } from "./config/loader.js";
 import { createGateway } from "./gateway.js";
 import { runInit, runInitFromOpenAPI } from "./init.js";
+import { log } from "./logger.js";
 
 const args = process.argv.slice(2);
 const command = args[0] ?? "start";
@@ -18,10 +19,10 @@ switch (command) {
 			const gateway = createGateway(config);
 			await gateway.start();
 		} catch (error) {
-			console.error(
-				"❌",
-				error instanceof Error ? error.message : "Failed to start tollbooth",
-			);
+			log.error("startup_failed", {
+				error:
+					error instanceof Error ? error.message : "Failed to start tollbooth",
+			});
 			process.exit(1);
 		}
 		break;
@@ -33,7 +34,9 @@ switch (command) {
 			const format = args[fromIdx + 1];
 			const specPath = args[fromIdx + 2];
 			if (format !== "openapi" || !specPath) {
-				console.error("❌ Usage: tollbooth init --from openapi <path>");
+				log.error("invalid_usage", {
+					error: "Usage: tollbooth init --from openapi <path>",
+				});
 				process.exit(1);
 			}
 			await runInitFromOpenAPI(specPath);
@@ -51,13 +54,14 @@ switch (command) {
 			const config = loadConfig(configPath);
 			const routeCount = Object.keys(config.routes).length;
 			const upstreamCount = Object.keys(config.upstreams).length;
-			console.log("✅ Config is valid");
-			console.log(`   ${upstreamCount} upstream(s), ${routeCount} route(s)`);
+			log.info("config_valid", {
+				upstreams: upstreamCount,
+				routes: routeCount,
+			});
 		} catch (error) {
-			console.error(
-				"❌",
-				error instanceof Error ? error.message : "Invalid config",
-			);
+			log.error("config_invalid", {
+				error: error instanceof Error ? error.message : "Invalid config",
+			});
 			process.exit(1);
 		}
 		break;

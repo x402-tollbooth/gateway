@@ -40,4 +40,5 @@ export type {
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 export { generateDiscoveryMetadata } from "./discovery/metadata.js";
+export { log } from "./logger.js";
 export { formatPrice, parsePrice } from "./pricing/parser.js";
