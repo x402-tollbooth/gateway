@@ -96,6 +96,130 @@ This fires requests at tollbooth and prints the 402 responses. You should see di
 
 Since no real wallet is signing payments, every request gets a 402 back with the `PAYMENT-REQUIRED` header — which is exactly what we want to verify.
 
+## End-to-End Test with Real Payments
+
+Run a full payment cycle on Base Sepolia testnet: `GET /weather` → 402 → sign → pay → 200 with tx hash.
+
+### 1. Set up two wallets
+
+You need two separate Ethereum wallets:
+
+- **Payer wallet** — the "buyer" that signs and pays for requests. Must hold testnet USDC.
+- **Gateway wallet** — the "seller" that receives USDC. Can be any address (no funds needed).
+
+The simplest way to create a dedicated test wallet for each:
+
+```bash
+# Using cast (install Foundry: https://getfoundry.sh)
+cast wallet new   # run twice, use one as payer and one as gateway
+```
+
+Or export keys from MetaMask, Coinbase Wallet, etc.
+
+### 2. Configure your env file
+
+Copy the example and fill in your values:
+
+```bash
+cp .env.test.example .env.test
+```
+
+```bash
+# .env.test
+
+# Payer wallet (the "buyer") — needs testnet USDC
+TEST_PRIVATE_KEY=0x...          # private key of the payer wallet
+TEST_WALLET_ADDRESS=0x...       # public address of the payer wallet
+
+# Gateway wallet (the "seller") — receives USDC payments
+TEST_GATEWAY_ADDRESS=0x...      # must be a different address from TEST_WALLET_ADDRESS
+```
+
+> **Never commit `.env.test`** — it contains your private key. It's already in `.gitignore`.
+
+### 3. Get testnet USDC
+
+The payer wallet needs USDC on Base Sepolia. The x402 facilitator sponsors gas, so you only need USDC — no ETH required.
+
+1. Go to the [Circle USDC Faucet](https://faucet.circle.com)
+2. Select **Base Sepolia** as the network
+3. Paste your **payer** wallet address (`TEST_WALLET_ADDRESS`) and request USDC
+
+You'll receive testnet USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e`.
+
+### 4. Run the test
+
+```bash
+bun install   # installs viem and other deps
+```
+
+Open three terminals:
+
+**Terminal 1 — dummy upstream:**
+```bash
+bun run examples/dummy-api.ts
+```
+
+**Terminal 2 — tollbooth gateway:**
+```bash
+bun run --env-file=.env.test src/cli.ts start --config=examples/tollbooth.config.e2e.yaml
+```
+
+**Terminal 3 — e2e test:**
+```bash
+bun run --env-file=.env.test examples/e2e-payment.ts
+```
+
+### Expected output
+
+```
+🔑 Payer wallet:   0xYourPayerAddress
+   Network:        Base Sepolia (chain 84532)
+   USDC contract:  0x036CbD53842c5426634e7929541eC2318f3dCF7e
+   Gateway:        http://localhost:3000
+
+── Step 1: GET /weather (expect 402) ──
+✓ Got 402 with payment requirements:
+  scheme:             exact
+  network:            base-sepolia
+  asset:              0x036CbD53842c5426634e7929541eC2318f3dCF7e
+  maxAmountRequired:  1000 (0.001 USDC)
+  payTo:              0xYourGatewayAddress
+  maxTimeoutSeconds:  300
+
+── Step 2: Sign EIP-3009 transferWithAuthorization ──
+✓ Payment signed:
+  from:         0xYourPayerAddress
+  to:           0xYourGatewayAddress
+  value:        1000 (0.001 USDC)
+  ...
+
+── Step 3: Resend GET /weather + payment-signature (expect 200) ──
+Status: 200
+
+── Step 4: Verify payment-response header ──
+
+✅ E2E test passed!
+──────────────────────────────────────────────────────────────
+  Tx hash:  0xabc123...
+  Network:  base-sepolia
+  Payer:    0xYourPayerAddress
+  Amount:   1000 raw units
+──────────────────────────────────────────────────────────────
+
+🔗 View on Basescan: https://sepolia.basescan.org/tx/0xabc123...
+```
+
+### How signing works
+
+The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed permit for USDC that lets the facilitator pull payment from the payer's wallet without the payer broadcasting a transaction. The flow:
+
+1. Tollbooth returns a 402 with the `payment-required` header (base64-encoded requirements)
+2. The client signs a `TransferWithAuthorization` EIP-712 typed-data message
+3. The signed payload is sent back in the `payment-signature` header
+4. Tollbooth forwards it to `https://x402.org/facilitator`, which verifies the signature and settles the on-chain transfer
+5. Tollbooth proxies to the upstream and returns 200 with a `payment-response` header containing the tx hash
+
 ## Features
 
 - **YAML-first config** — define upstreams, routes, and pricing without code

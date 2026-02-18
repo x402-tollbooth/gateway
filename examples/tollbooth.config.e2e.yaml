@@ -1,0 +1,35 @@
+# tollbooth.config.e2e.yaml
+#
+# E2E test configuration — uses real USDC payments on Base Sepolia testnet.
+#
+# Required env vars (loaded from .env.test):
+#   TEST_GATEWAY_ADDRESS — the wallet address that receives USDC payments
+#
+# Start tollbooth:
+#   bun run --env-file=.env.test src/cli.ts start --config=examples/tollbooth.config.e2e.yaml
+
+gateway:
+  port: 3000
+  discovery: true
+
+wallets:
+  base-sepolia: "${TEST_GATEWAY_ADDRESS}"
+
+accepts:
+  - asset: USDC
+    network: base-sepolia
+
+defaults:
+  price: "$0.001"  # 1000 USDC micro-units — cheap for testnet
+  timeout: 300
+
+upstreams:
+  dummy:
+    url: "http://localhost:4000"
+
+routes:
+  # Cheapest possible price to minimise testnet USDC spend ($0.001 = 1000 units)
+  "GET /weather":
+    upstream: dummy
+    path: "/weather"
+    price: "$0.001"
