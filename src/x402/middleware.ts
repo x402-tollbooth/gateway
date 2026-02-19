@@ -94,19 +94,29 @@ export function createPaymentRequiredResponse(
 	});
 }
 
+export interface PaymentResult {
+	settlement: SettlementInfo;
+	facilitatorUrl: string;
+}
+
+export interface VerificationResult {
+	payer?: string;
+	paymentPayload: unknown;
+	requirement: PaymentRequirementsPayload;
+	facilitator: FacilitatorConfig;
+	facilitatorUrl: string;
+}
+
 /**
- * Attempt to extract and verify a payment from the request.
- * Returns settlement info if payment is valid, null if no payment header present.
- * Throws if payment is present but invalid.
- *
- * Each entry in `facilitators` corresponds to the requirement at the same index.
- * The payment is tried against each requirement/facilitator pair until one verifies.
+ * Verify a payment from the request without settling.
+ * Returns verification info if payment is valid, null if no payment header present.
+ * Throws PaymentError if payment is present but invalid.
  */
-export async function processPayment(
+export async function processVerification(
 	request: Request,
 	requirements: PaymentRequirementsPayload[],
 	facilitators: FacilitatorConfig[],
-): Promise<SettlementInfo | null> {
+): Promise<VerificationResult | null> {
 	const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
 
 	if (!paymentHeader) {
@@ -122,7 +132,6 @@ export async function processPayment(
 		const facilitator = facilitators[i] ?? facilitators[0];
 		const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
 
-		// Verify
 		let verification: Awaited<ReturnType<typeof verifyPayment>>;
 		try {
 			verification = await verifyPayment(paymentPayload, req, facilitator);
@@ -143,35 +152,71 @@ export async function processPayment(
 			continue;
 		}
 
-		// Settle — verification succeeded, so use this facilitator
-		let settlement: Awaited<ReturnType<typeof settlePayment>>;
-		try {
-			settlement = await settlePayment(paymentPayload, req, facilitator);
-		} catch (err) {
-			throw new PaymentError(
-				err instanceof Error
-					? err.message
-					: `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
-				502,
-			);
-		}
-		if (!settlement.success) {
-			throw new PaymentError(
-				`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
-				502,
-			);
-		}
-
-		const info = toSettlementInfo(settlement);
-		info.amount = req.maxAmountRequired;
-		return info;
+		return {
+			payer: verification.payer,
+			paymentPayload,
+			requirement: req,
+			facilitator,
+			facilitatorUrl,
+		};
 	}
 
-	// All requirements failed verification
 	throw (
 		lastError ??
 		new PaymentError("Payment verification failed for all payment methods", 402)
 	);
+}
+
+/**
+ * Settle a previously verified payment.
+ * Throws PaymentError on settlement failure.
+ */
+export async function executeSettlement(
+	verification: VerificationResult,
+): Promise<PaymentResult> {
+	const { paymentPayload, requirement, facilitator, facilitatorUrl } =
+		verification;
+
+	let settlement: Awaited<ReturnType<typeof settlePayment>>;
+	try {
+		settlement = await settlePayment(paymentPayload, requirement, facilitator);
+	} catch (err) {
+		throw new PaymentError(
+			err instanceof Error
+				? err.message
+				: `Payment settlement failed — unknown error (facilitator: ${facilitatorUrl})`,
+			502,
+		);
+	}
+	if (!settlement.success) {
+		throw new PaymentError(
+			`Payment settlement failed: ${settlement.errorReason ?? "unknown reason"}\n  → Facilitator: ${facilitatorUrl}`,
+			502,
+		);
+	}
+
+	const info = toSettlementInfo(settlement);
+	info.amount = requirement.maxAmountRequired;
+	return { settlement: info, facilitatorUrl };
+}
+
+/**
+ * Verify and settle a payment in one call (for before-response mode).
+ * Returns settlement info if payment is valid, null if no payment header present.
+ * Throws if payment is present but invalid or settlement fails.
+ */
+export async function processPayment(
+	request: Request,
+	requirements: PaymentRequirementsPayload[],
+	facilitators: FacilitatorConfig[],
+): Promise<PaymentResult | null> {
+	const verification = await processVerification(
+		request,
+		requirements,
+		facilitators,
+	);
+	if (!verification) return null;
+	return executeSettlement(verification);
 }
 
 export class PaymentError extends Error {

@@ -60,6 +60,7 @@ export interface RouteConfig {
 	facilitator?: string | FacilitatorMapping;
 	rateLimit?: RateLimitConfig;
 	models?: Record<string, string>;
+	settlement?: "before-response" | "after-response";
 }
 
 export interface MatchRule {
@@ -116,12 +117,22 @@ export interface SettledHookContext extends HookContext {
 }
 
 export interface ResponseHookContext extends HookContext {
-	settlement: SettlementInfo;
+	settlement?: SettlementInfo;
 	response: UpstreamResponse;
+}
+
+export interface SettlementSkippedInfo {
+	reason: string;
+}
+
+export interface SettlementDecision {
+	settle: boolean;
+	reason?: string;
 }
 
 export interface ErrorHookContext extends HookContext {
 	settlement?: SettlementInfo;
+	settlementSkipped?: SettlementSkippedInfo;
 	error: TollboothError;
 }
 
@@ -134,9 +145,13 @@ export type PriceResolvedHook = (
 export type SettledHook = (
 	ctx: SettledHookContext,
 ) => Promise<HookResult | undefined>;
+export type ResponseHookResult =
+	| UpstreamResponse
+	| SettlementDecision
+	| undefined;
 export type ResponseHook = (
 	ctx: ResponseHookContext,
-) => Promise<UpstreamResponse | undefined>;
+) => Promise<ResponseHookResult>;
 export type ErrorHook = (ctx: ErrorHookContext) => Promise<void>;
 
 export interface HookResult {

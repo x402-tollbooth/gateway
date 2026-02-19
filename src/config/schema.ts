@@ -66,6 +66,7 @@ const routeConfigSchema = z.object({
 	facilitator: facilitatorSchema.optional(),
 	rateLimit: rateLimitSchema.optional(),
 	models: z.record(z.string().min(1)).optional(),
+	settlement: z.enum(["before-response", "after-response"]).optional(),
 });
 
 const upstreamConfigSchema = z.object({

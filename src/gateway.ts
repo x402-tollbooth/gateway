@@ -23,17 +23,22 @@ import { matchRoute } from "./router/router.js";
 import type {
 	RateLimitStore,
 	ResolvedRoute,
+	SettlementDecision,
+	SettlementInfo,
 	TollboothConfig,
 	TollboothGateway,
 	TollboothRequest,
+	UpstreamResponse,
 } from "./types.js";
 import { resolveFacilitatorUrl } from "./x402/facilitator.js";
 import { encodePaymentResponse, HEADERS } from "./x402/headers.js";
 import {
 	buildPaymentRequirements,
 	createPaymentRequiredResponse,
+	executeSettlement,
 	PaymentError,
 	processPayment,
+	processVerification,
 } from "./x402/middleware.js";
 
 /**
@@ -125,6 +130,9 @@ export function createGateway(
 			params,
 		};
 
+		let resolvedRoute: ResolvedRoute | undefined;
+		const settlementStrategy = route.settlement ?? "before-response";
+
 		try {
 			// ── Rate limiting ────────────────────────────────────────────────
 			const rateLimit = resolveRateLimit(route.rateLimit, config);
@@ -213,7 +221,7 @@ export function createGateway(
 				? rewritePath(route.path, params, query)
 				: url.pathname;
 
-			const resolvedRoute: ResolvedRoute = {
+			resolvedRoute = {
 				upstream,
 				upstreamPath,
 				price: price.amount,
@@ -245,7 +253,6 @@ export function createGateway(
 				accepts,
 			);
 
-			// Resolve facilitator per chain/asset: route → chain-specific → global → default
 			const facilitators = accepts.map((a) => ({
 				url: resolveFacilitatorUrl(
 					a.network,
@@ -255,17 +262,37 @@ export function createGateway(
 				),
 			}));
 
-			const settlement = await processPayment(
+			// ── Branch on settlement strategy ────────────────────────────────
+			if (settlementStrategy === "after-response") {
+				return await handleAfterResponse(
+					request,
+					tollboothReq,
+					resolvedRoute,
+					upstream,
+					upstreamPath,
+					rawBody,
+					requirements,
+					facilitators,
+					price,
+					route,
+					routeKey,
+					url,
+					start,
+				);
+			}
+
+			// ── before-response (default) ────────────────────────────────────
+			const paymentResult = await processPayment(
 				request,
 				requirements,
 				facilitators,
 			);
 
-			if (!settlement) {
-				// No payment header → return 402
+			if (!paymentResult) {
 				return createPaymentRequiredResponse(requirements);
 			}
 
+			const settlement = paymentResult.settlement;
 			tollboothReq.payer = settlement.payer;
 
 			log.info("payment_settled", {
@@ -285,14 +312,11 @@ export function createGateway(
 			if (onSettledResult?.reject) {
 				return new Response(
 					onSettledResult.body ?? "Rejected after settlement",
-					{
-						status: onSettledResult.status ?? 403,
-					},
+					{ status: onSettledResult.status ?? 403 },
 				);
 			}
 
 			// ── Proxy to upstream ────────────────────────────────────────────
-			// If we didn't buffer earlier, we need the raw body now
 			if (!rawBody && !["GET", "HEAD"].includes(request.method.toUpperCase())) {
 				rawBody = await request.arrayBuffer();
 			}
@@ -306,7 +330,7 @@ export function createGateway(
 			);
 
 			// ── Hook: onResponse ─────────────────────────────────────────────
-			const modifiedResponse = await runOnResponse(
+			const hookResult = await runOnResponse(
 				{
 					req: tollboothReq,
 					route: resolvedRoute,
@@ -317,58 +341,117 @@ export function createGateway(
 				config.hooks,
 			);
 
-			const finalResponse = modifiedResponse ?? upstreamResponse;
+			// In before-response mode, only accept UpstreamResponse modifications
+			const finalResponse = isUpstreamResponse(hookResult)
+				? hookResult
+				: upstreamResponse;
 
-			// Build the final HTTP response
-			const responseHeaders = new Headers(finalResponse.headers);
-			responseHeaders.set(
-				HEADERS.PAYMENT_RESPONSE,
-				encodePaymentResponse(settlement),
-			);
-
-			// Ensure SSE-friendly headers for streaming responses
-			const contentType = finalResponse.headers["content-type"] ?? "";
-			if (contentType.includes("text/event-stream")) {
-				if (!responseHeaders.has("cache-control")) {
-					responseHeaders.set("cache-control", "no-cache");
-				}
-			}
-
-			const duration_ms = Math.round(performance.now() - start);
-			log.info("request", {
-				method: request.method,
-				path: url.pathname,
-				route: routeKey,
-				price: formatPrice(price.amount, price.asset),
-				duration_ms,
-				status: finalResponse.status,
-			});
-
-			return new Response(
-				finalResponse.body as string | ReadableStream | null,
-				{
-					status: finalResponse.status,
-					headers: responseHeaders,
-				},
+			return buildFinalResponse(
+				finalResponse,
+				settlement,
+				undefined,
+				price,
+				request,
+				url,
+				routeKey,
+				start,
 			);
 		} catch (error) {
-			// ── Hook: onError ────────────────────────────────────────────────
-			if (error instanceof PaymentError) {
-				log.warn("payment_failed", {
-					method: request.method,
-					path: url.pathname,
-					route: routeKey,
-					status: error.statusCode,
-					error: error.message,
-					duration_ms: Math.round(performance.now() - start),
-				});
-				return new Response(JSON.stringify({ error: error.message }), {
-					status: error.statusCode,
-					headers: { "Content-Type": "application/json" },
-				});
-			}
+			return handleError(
+				error,
+				request,
+				tollboothReq,
+				url,
+				routeKey,
+				route,
+				upstream,
+				params,
+				query,
+				resolvedRoute,
+				settlementStrategy,
+				start,
+			);
+		}
+	}
 
+	/**
+	 * Handle the after-response settlement strategy.
+	 * Verify → proxy → conditionally settle based on upstream response.
+	 */
+	async function handleAfterResponse(
+		request: Request,
+		tollboothReq: TollboothRequest,
+		resolvedRoute: ResolvedRoute,
+		upstream: import("./types.js").UpstreamConfig,
+		upstreamPath: string,
+		rawBody: ArrayBuffer | undefined,
+		requirements: import("./x402/middleware.js").PaymentRequirementsPayload[],
+		facilitators: { url: string }[],
+		price: {
+			amount: bigint;
+			asset: string;
+			network: string;
+			payTo: string | import("./types.js").PayToSplit[];
+		},
+		route: import("./types.js").RouteConfig,
+		routeKey: string,
+		url: URL,
+		start: number,
+	): Promise<Response> {
+		// ── Verify only (no settle yet) ──────────────────────────────────
+		const verification = await processVerification(
+			request,
+			requirements,
+			facilitators,
+		);
+
+		if (!verification) {
+			return createPaymentRequiredResponse(requirements);
+		}
+
+		if (verification.payer) {
+			tollboothReq.payer = verification.payer;
+		}
+
+		// ── Proxy to upstream ────────────────────────────────────────────
+		if (!rawBody && !["GET", "HEAD"].includes(request.method.toUpperCase())) {
+			rawBody = await request.arrayBuffer();
+		}
+
+		let upstreamResponse: UpstreamResponse;
+		try {
+			upstreamResponse = await proxyRequest(
+				upstream,
+				upstreamPath,
+				request,
+				rawBody,
+				route.upstream,
+			);
+		} catch (error) {
+			// Upstream connection failure — don't settle
 			if (error instanceof UpstreamError) {
+				const reason = "upstream_unreachable";
+				log.info("settlement_skipped", {
+					payer: verification.payer,
+					reason,
+					upstream_status: 502,
+				});
+
+				await runOnError(
+					{
+						req: tollboothReq,
+						route: resolvedRoute,
+						settlementSkipped: { reason },
+						error: {
+							status: 502,
+							message: error.message,
+							upstream: error.upstreamUrl,
+						},
+					},
+					route.hooks,
+					config.hooks,
+				);
+
 				log.error("upstream_error", {
 					method: request.method,
 					path: url.pathname,
@@ -376,55 +459,266 @@ export function createGateway(
 					upstream: error.upstreamUrl,
 					error: error.message,
 					duration_ms: Math.round(performance.now() - start),
+					settlement_skipped: true,
 				});
+
 				return new Response(JSON.stringify({ error: error.message }), {
 					status: 502,
-					headers: { "Content-Type": "application/json" },
+					headers: {
+						"Content-Type": "application/json",
+						"x-tollbooth-settlement-skipped": JSON.stringify({ reason }),
+					},
 				});
 			}
+			throw error;
+		}
 
-			const upstreamPath = route.path
-				? rewritePath(route.path, params, query)
-				: url.pathname;
+		// ── Hook: onResponse (no settlement in context yet) ──────────────
+		const hookResult = await runOnResponse(
+			{
+				req: tollboothReq,
+				route: resolvedRoute,
+				response: upstreamResponse,
+			},
+			route.hooks,
+			config.hooks,
+		);
 
-			const resolvedRoute: ResolvedRoute = {
-				upstream,
-				upstreamPath,
-				price: 0n,
-				asset: "",
-				network: "",
-				payTo: "",
-				routeKey,
-			};
+		// Determine final response and settlement decision
+		let finalResponse: UpstreamResponse;
+		let shouldSettle: boolean;
+		let skipReason: string | undefined;
 
-			const errMsg = error instanceof Error ? error.message : "Unknown error";
+		if (isSettlementDecision(hookResult)) {
+			finalResponse = upstreamResponse;
+			shouldSettle = hookResult.settle;
+			skipReason = hookResult.reason;
+		} else {
+			finalResponse = isUpstreamResponse(hookResult)
+				? hookResult
+				: upstreamResponse;
+			// Default: settle if original upstream status < 500
+			shouldSettle = shouldSettleByDefault(upstreamResponse.status);
+		}
 
-			log.error("internal_error", {
-				method: request.method,
-				path: url.pathname,
-				route: routeKey,
-				error: errMsg,
-				duration_ms: Math.round(performance.now() - start),
+		if (shouldSettle) {
+			// ── Settle ───────────────────────────────────────────────────
+			const paymentResult = await executeSettlement(verification);
+			const settlement = paymentResult.settlement;
+			tollboothReq.payer = settlement.payer;
+
+			log.info("payment_settled", {
+				payer: settlement.payer,
+				tx_hash: settlement.transaction,
+				amount: settlement.amount,
+				asset: price.asset,
+				network: price.network,
 			});
 
-			await runOnError(
-				{
-					req: tollboothReq,
-					route: resolvedRoute,
-					error: {
-						status: 500,
-						message: errMsg,
-					},
-				},
+			// ── Hook: onSettled ──────────────────────────────────────────
+			const onSettledResult = await runOnSettled(
+				{ req: tollboothReq, route: resolvedRoute, settlement },
 				route.hooks,
 				config.hooks,
 			);
+			if (onSettledResult?.reject) {
+				return new Response(
+					onSettledResult.body ?? "Rejected after settlement",
+					{ status: onSettledResult.status ?? 403 },
+				);
+			}
 
-			return new Response(JSON.stringify({ error: "Internal gateway error" }), {
+			return buildFinalResponse(
+				finalResponse,
+				settlement,
+				undefined,
+				price,
+				request,
+				url,
+				routeKey,
+				start,
+			);
+		}
+
+		// ── Settlement skipped ───────────────────────────────────────────
+		const reason = skipReason ?? defaultSkipReason(upstreamResponse.status);
+
+		log.info("settlement_skipped", {
+			payer: verification.payer,
+			reason,
+			upstream_status: upstreamResponse.status,
+		});
+
+		await runOnError(
+			{
+				req: tollboothReq,
+				route: resolvedRoute,
+				settlementSkipped: { reason },
+				error: {
+					status: upstreamResponse.status,
+					message: `Upstream returned ${upstreamResponse.status}`,
+					upstream: upstream.url,
+				},
+			},
+			route.hooks,
+			config.hooks,
+		);
+
+		return buildFinalResponse(
+			finalResponse,
+			undefined,
+			reason,
+			price,
+			request,
+			url,
+			routeKey,
+			start,
+		);
+	}
+
+	/**
+	 * Build the final HTTP response with appropriate payment/settlement headers.
+	 */
+	function buildFinalResponse(
+		finalResponse: UpstreamResponse,
+		settlement: SettlementInfo | undefined,
+		settlementSkippedReason: string | undefined,
+		price: { amount: bigint; asset: string },
+		request: Request,
+		url: URL,
+		routeKey: string,
+		start: number,
+	): Response {
+		const responseHeaders = new Headers(finalResponse.headers);
+
+		if (settlement) {
+			responseHeaders.set(
+				HEADERS.PAYMENT_RESPONSE,
+				encodePaymentResponse(settlement),
+			);
+		}
+
+		if (settlementSkippedReason) {
+			responseHeaders.set(
+				"x-tollbooth-settlement-skipped",
+				JSON.stringify({ reason: settlementSkippedReason }),
+			);
+		}
+
+		// Ensure SSE-friendly headers for streaming responses
+		const contentType = finalResponse.headers["content-type"] ?? "";
+		if (contentType.includes("text/event-stream")) {
+			if (!responseHeaders.has("cache-control")) {
+				responseHeaders.set("cache-control", "no-cache");
+			}
+		}
+
+		const duration_ms = Math.round(performance.now() - start);
+		log.info("request", {
+			method: request.method,
+			path: url.pathname,
+			route: routeKey,
+			price: formatPrice(price.amount, price.asset),
+			duration_ms,
+			status: finalResponse.status,
+			...(settlementSkippedReason ? { settlement_skipped: true } : {}),
+		});
+
+		return new Response(finalResponse.body as string | ReadableStream | null, {
+			status: finalResponse.status,
+			headers: responseHeaders,
+		});
+	}
+
+	/**
+	 * Handle errors from the try block.
+	 */
+	function handleError(
+		error: unknown,
+		request: Request,
+		tollboothReq: TollboothRequest,
+		url: URL,
+		routeKey: string,
+		route: import("./types.js").RouteConfig,
+		upstream: import("./types.js").UpstreamConfig,
+		params: Record<string, string>,
+		query: Record<string, string>,
+		resolvedRoute: ResolvedRoute | undefined,
+		_settlementStrategy: string,
+		start: number,
+	): Response {
+		if (error instanceof PaymentError) {
+			log.warn("payment_failed", {
+				method: request.method,
+				path: url.pathname,
+				route: routeKey,
+				status: error.statusCode,
+				error: error.message,
+				duration_ms: Math.round(performance.now() - start),
+			});
+			return new Response(JSON.stringify({ error: error.message }), {
+				status: error.statusCode,
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		if (error instanceof UpstreamError) {
+			log.error("upstream_error", {
+				method: request.method,
+				path: url.pathname,
+				route: routeKey,
+				upstream: error.upstreamUrl,
+				error: error.message,
+				duration_ms: Math.round(performance.now() - start),
+			});
+			return new Response(JSON.stringify({ error: error.message }), {
 				status: 502,
 				headers: { "Content-Type": "application/json" },
 			});
 		}
+
+		const upstreamPath = route.path
+			? rewritePath(route.path, params, query)
+			: url.pathname;
+
+		const fallbackRoute: ResolvedRoute = resolvedRoute ?? {
+			upstream,
+			upstreamPath,
+			price: 0n,
+			asset: "",
+			network: "",
+			payTo: "",
+			routeKey,
+		};
+
+		const errMsg = error instanceof Error ? error.message : "Unknown error";
+
+		log.error("internal_error", {
+			method: request.method,
+			path: url.pathname,
+			route: routeKey,
+			error: errMsg,
+			duration_ms: Math.round(performance.now() - start),
+		});
+
+		// Fire-and-forget: don't await in a sync return path
+		runOnError(
+			{
+				req: tollboothReq,
+				route: fallbackRoute,
+				error: {
+					status: 500,
+					message: errMsg,
+				},
+			},
+			route.hooks,
+			config.hooks,
+		);
+
+		return new Response(JSON.stringify({ error: "Internal gateway error" }), {
+			status: 502,
+			headers: { "Content-Type": "application/json" },
+		});
 	}
 
 	return {
@@ -460,4 +754,26 @@ export function createGateway(
 			}
 		},
 	};
+}
+
+function shouldSettleByDefault(status: number): boolean {
+	return status < 500;
+}
+
+function defaultSkipReason(status: number): string {
+	if (status >= 500) return "upstream_5xx";
+	return "upstream_error";
+}
+
+function isSettlementDecision(result: unknown): result is SettlementDecision {
+	return result != null && typeof result === "object" && "settle" in result;
+}
+
+function isUpstreamResponse(result: unknown): result is UpstreamResponse {
+	return (
+		result != null &&
+		typeof result === "object" &&
+		"status" in result &&
+		"headers" in result
+	);
 }

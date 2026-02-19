@@ -1,4 +1,4 @@
-import type { FacilitatorMapping, SettlementInfo } from "../types.js";
+import type { FacilitatorMapping } from "../types.js";
 
 const DEFAULT_FACILITATOR = "https://x402.org/facilitator";
 

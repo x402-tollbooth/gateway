@@ -9,10 +9,10 @@ import type {
 	RequestHookContext,
 	ResponseHook,
 	ResponseHookContext,
+	ResponseHookResult,
 	RouteHooksConfig,
 	SettledHook,
 	SettledHookContext,
-	UpstreamResponse,
 } from "../types.js";
 
 type HookFn =
@@ -104,7 +104,7 @@ export async function runOnResponse(
 	ctx: ResponseHookContext,
 	routeHooks?: RouteHooksConfig,
 	globalHooks?: GlobalHooksConfig,
-): Promise<UpstreamResponse | undefined> {
+): Promise<ResponseHookResult> {
 	const path = resolveHookPath("onResponse", routeHooks, globalHooks);
 	if (!path) return;
 
