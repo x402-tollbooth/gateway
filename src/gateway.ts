@@ -21,13 +21,16 @@ import { MemoryRateLimitStore } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
 import { matchRoute } from "./router/router.js";
 import type {
+	PayToSplit,
 	RateLimitStore,
 	ResolvedRoute,
+	RouteConfig,
 	SettlementDecision,
 	SettlementInfo,
 	TollboothConfig,
 	TollboothGateway,
 	TollboothRequest,
+	UpstreamConfig,
 	UpstreamResponse,
 } from "./types.js";
 import { resolveFacilitatorUrl } from "./x402/facilitator.js";
@@ -37,9 +40,55 @@ import {
 	createPaymentRequiredResponse,
 	executeSettlement,
 	PaymentError,
+	type PaymentRequirementsPayload,
 	processPayment,
 	processVerification,
 } from "./x402/middleware.js";
+
+interface AfterResponseCtx {
+	request: Request;
+	tollboothReq: TollboothRequest;
+	route: RouteConfig;
+	routeKey: string;
+	upstream: UpstreamConfig;
+	upstreamPath: string;
+	resolvedRoute: ResolvedRoute;
+	rawBody: ArrayBuffer | undefined;
+	requirements: PaymentRequirementsPayload[];
+	facilitators: { url: string }[];
+	price: {
+		amount: bigint;
+		asset: string;
+		network: string;
+		payTo: string | PayToSplit[];
+	};
+	url: URL;
+	start: number;
+}
+
+interface FinalResponseCtx {
+	response: UpstreamResponse;
+	settlement?: SettlementInfo;
+	settlementSkippedReason?: string;
+	price: { amount: bigint; asset: string };
+	request: Request;
+	url: URL;
+	routeKey: string;
+	start: number;
+}
+
+interface ErrorCtx {
+	request: Request;
+	tollboothReq: TollboothRequest;
+	url: URL;
+	routeKey: string;
+	route: RouteConfig;
+	upstream: UpstreamConfig;
+	params: Record<string, string>;
+	query: Record<string, string>;
+	resolvedRoute?: ResolvedRoute;
+	start: number;
+}
 
 /**
  * Create a tollbooth gateway from a validated config.
@@ -264,10 +313,10 @@ export function createGateway(
 
 			// ── Branch on settlement strategy ────────────────────────────────
 			if (settlementStrategy === "after-response") {
-				return await handleAfterResponse(
+				return await handleAfterResponse({
 					request,
 					tollboothReq,
-					resolvedRoute,
+					resolvedRoute: resolvedRoute as ResolvedRoute,
 					upstream,
 					upstreamPath,
 					rawBody,
@@ -278,7 +327,7 @@ export function createGateway(
 					routeKey,
 					url,
 					start,
-				);
+				});
 			}
 
 			// ── before-response (default) ────────────────────────────────────
@@ -346,19 +395,17 @@ export function createGateway(
 				? hookResult
 				: upstreamResponse;
 
-			return buildFinalResponse(
-				finalResponse,
+			return buildFinalResponse({
+				response: finalResponse,
 				settlement,
-				undefined,
 				price,
 				request,
 				url,
 				routeKey,
 				start,
-			);
+			});
 		} catch (error) {
-			return handleError(
-				error,
+			return handleError(error, {
 				request,
 				tollboothReq,
 				url,
@@ -368,9 +415,8 @@ export function createGateway(
 				params,
 				query,
 				resolvedRoute,
-				settlementStrategy,
 				start,
-			);
+			});
 		}
 	}
 
@@ -378,26 +424,23 @@ export function createGateway(
 	 * Handle the after-response settlement strategy.
 	 * Verify → proxy → conditionally settle based on upstream response.
 	 */
-	async function handleAfterResponse(
-		request: Request,
-		tollboothReq: TollboothRequest,
-		resolvedRoute: ResolvedRoute,
-		upstream: import("./types.js").UpstreamConfig,
-		upstreamPath: string,
-		rawBody: ArrayBuffer | undefined,
-		requirements: import("./x402/middleware.js").PaymentRequirementsPayload[],
-		facilitators: { url: string }[],
-		price: {
-			amount: bigint;
-			asset: string;
-			network: string;
-			payTo: string | import("./types.js").PayToSplit[];
-		},
-		route: import("./types.js").RouteConfig,
-		routeKey: string,
-		url: URL,
-		start: number,
-	): Promise<Response> {
+	async function handleAfterResponse(ctx: AfterResponseCtx): Promise<Response> {
+		const {
+			request,
+			tollboothReq,
+			resolvedRoute,
+			upstream,
+			upstreamPath,
+			requirements,
+			facilitators,
+			price,
+			route,
+			routeKey,
+			url,
+			start,
+		} = ctx;
+		let rawBody = ctx.rawBody;
+
 		// ── Verify only (no settle yet) ──────────────────────────────────
 		const verification = await processVerification(
 			request,
@@ -528,16 +571,15 @@ export function createGateway(
 				);
 			}
 
-			return buildFinalResponse(
-				finalResponse,
+			return buildFinalResponse({
+				response: finalResponse,
 				settlement,
-				undefined,
 				price,
 				request,
 				url,
 				routeKey,
 				start,
-			);
+			});
 		}
 
 		// ── Settlement skipped ───────────────────────────────────────────
@@ -564,31 +606,31 @@ export function createGateway(
 			config.hooks,
 		);
 
-		return buildFinalResponse(
-			finalResponse,
-			undefined,
-			reason,
+		return buildFinalResponse({
+			response: finalResponse,
+			settlementSkippedReason: reason,
 			price,
 			request,
 			url,
 			routeKey,
 			start,
-		);
+		});
 	}
 
 	/**
 	 * Build the final HTTP response with appropriate payment/settlement headers.
 	 */
-	function buildFinalResponse(
-		finalResponse: UpstreamResponse,
-		settlement: SettlementInfo | undefined,
-		settlementSkippedReason: string | undefined,
-		price: { amount: bigint; asset: string },
-		request: Request,
-		url: URL,
-		routeKey: string,
-		start: number,
-	): Response {
+	function buildFinalResponse(ctx: FinalResponseCtx): Response {
+		const {
+			response: finalResponse,
+			settlement,
+			settlementSkippedReason,
+			price,
+			request,
+			url,
+			routeKey,
+			start,
+		} = ctx;
 		const responseHeaders = new Headers(finalResponse.headers);
 
 		if (settlement) {
@@ -633,20 +675,19 @@ export function createGateway(
 	/**
 	 * Handle errors from the try block.
 	 */
-	function handleError(
-		error: unknown,
-		request: Request,
-		tollboothReq: TollboothRequest,
-		url: URL,
-		routeKey: string,
-		route: import("./types.js").RouteConfig,
-		upstream: import("./types.js").UpstreamConfig,
-		params: Record<string, string>,
-		query: Record<string, string>,
-		resolvedRoute: ResolvedRoute | undefined,
-		_settlementStrategy: string,
-		start: number,
-	): Response {
+	function handleError(error: unknown, ctx: ErrorCtx): Response {
+		const {
+			request,
+			tollboothReq,
+			url,
+			routeKey,
+			route,
+			upstream,
+			params,
+			query,
+			resolvedRoute,
+			start,
+		} = ctx;
 		if (error instanceof PaymentError) {
 			log.warn("payment_failed", {
 				method: request.method,
