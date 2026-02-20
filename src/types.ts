@@ -48,7 +48,7 @@ export interface UpstreamConfig {
 
 export interface RouteConfig {
 	upstream: string;
-	type?: "openai-compatible";
+	type?: "token-based" | "openai-compatible";
 	path?: string;
 	price?: string | PricingFnRef;
 	match?: MatchRule[];

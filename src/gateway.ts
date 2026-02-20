@@ -239,13 +239,13 @@ export function createGateway(
 				payTo: string | import("./types.js").PayToSplit[];
 			};
 
-			if (route.type === "openai-compatible") {
+			if (route.type === "token-based" || route.type === "openai-compatible") {
 				const model = extractModel(parsedBody);
 				if (!model) {
 					return new Response(
 						JSON.stringify({
 							error: 'Missing or invalid "model" field in request body',
-							hint: 'openai-compatible routes require a "model" string in the JSON body',
+							hint: 'token-based routes require a "model" string in the JSON body',
 						}),
 						{
 							status: 400,

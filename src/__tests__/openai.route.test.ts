@@ -64,7 +64,7 @@ describe("resolveOpenAIPrice", () => {
 
 	const baseRoute: RouteConfig = {
 		upstream: "openai",
-		type: "openai-compatible",
+		type: "token-based",
 	};
 
 	test("resolves price from default table for known model", () => {
@@ -158,8 +158,14 @@ describe("DEFAULT_MODEL_PRICES", () => {
 
 // ── routeNeedsBody ───────────────────────────────────────────────────────────
 
-describe("routeNeedsBody for openai-compatible", () => {
-	test("returns true for openai-compatible routes", () => {
+describe("routeNeedsBody for token-based", () => {
+	test("returns true for token-based routes", () => {
+		expect(routeNeedsBody({ upstream: "openai", type: "token-based" })).toBe(
+			true,
+		);
+	});
+
+	test("returns true for openai-compatible routes (deprecated alias)", () => {
 		expect(
 			routeNeedsBody({ upstream: "openai", type: "openai-compatible" }),
 		).toBe(true);
@@ -172,7 +178,7 @@ describe("routeNeedsBody for openai-compatible", () => {
 
 // ── Schema validation ────────────────────────────────────────────────────────
 
-describe("config schema with openai-compatible route", () => {
+describe("config schema with token-based route", () => {
 	const { tollboothConfigSchema } = require("../config/schema.js");
 
 	const validConfig = {
@@ -182,23 +188,36 @@ describe("config schema with openai-compatible route", () => {
 		routes: {
 			"POST /v1/chat/completions": {
 				upstream: "openai",
-				type: "openai-compatible",
+				type: "token-based",
 			},
 		},
 	};
 
-	test("accepts type: openai-compatible", () => {
+	test("accepts type: token-based", () => {
 		const result = tollboothConfigSchema.safeParse(validConfig);
 		expect(result.success).toBe(true);
 	});
 
-	test("accepts type: openai-compatible with models override", () => {
+	test("accepts type: openai-compatible (deprecated alias)", () => {
 		const result = tollboothConfigSchema.safeParse({
 			...validConfig,
 			routes: {
 				"POST /v1/chat/completions": {
 					upstream: "openai",
 					type: "openai-compatible",
+				},
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts type: token-based with models override", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			routes: {
+				"POST /v1/chat/completions": {
+					upstream: "openai",
+					type: "token-based",
 					models: {
 						"gpt-4o": "$0.05",
 						"gpt-4o-mini": "$0.005",

@@ -54,7 +54,7 @@ const facilitatorSchema = z.union([z.string().url(), facilitatorMappingSchema]);
 
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
-	type: z.enum(["openai-compatible"]).optional(),
+	type: z.enum(["token-based", "openai-compatible"]).optional(),
 	path: z.string().optional(),
 	price: z.union([z.string().min(1), pricingFnRefSchema]).optional(),
 	match: z.array(matchRuleSchema).optional(),
