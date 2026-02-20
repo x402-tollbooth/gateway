@@ -25,8 +25,8 @@ import {
 	initSettlementStrategy,
 } from "./settlement/loader.js";
 import type {
-	PayToSplit,
 	PaymentRequirementsPayload,
+	PayToSplit,
 	RateLimitStore,
 	ResolvedRoute,
 	RouteConfig,
@@ -40,13 +40,16 @@ import type {
 	UpstreamConfig,
 	UpstreamResponse,
 } from "./types.js";
-import { encodePaymentResponse, HEADERS } from "./x402/headers.js";
+import {
+	decodePaymentSignature,
+	encodePaymentResponse,
+	HEADERS,
+} from "./x402/headers.js";
 import {
 	buildPaymentRequirements,
 	createPaymentRequiredResponse,
 	PaymentError,
 } from "./x402/middleware.js";
-import { decodePaymentSignature } from "./x402/headers.js";
 
 interface AfterResponseCtx {
 	request: Request;

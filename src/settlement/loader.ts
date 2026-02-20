@@ -72,14 +72,12 @@ export function createFacilitatorStrategy(
  * Returns `null` for the default facilitator strategy (which is created
  * per-request because facilitator URLs depend on the matched route).
  */
-export async function initSettlementStrategy(
-	config: { settlement?: SettlementStrategyConfig },
-): Promise<SettlementStrategy | null> {
+export async function initSettlementStrategy(config: {
+	settlement?: SettlementStrategyConfig;
+}): Promise<SettlementStrategy | null> {
 	if (config.settlement?.strategy === "custom") {
 		if (!config.settlement.module) {
-			throw new Error(
-				"Custom settlement strategy requires a 'module' path",
-			);
+			throw new Error("Custom settlement strategy requires a 'module' path");
 		}
 		return loadCustomStrategy(config.settlement.module);
 	}

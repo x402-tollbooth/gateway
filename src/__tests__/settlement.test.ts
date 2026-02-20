@@ -1,12 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createGateway } from "../gateway.js";
 import { FacilitatorSettlement } from "../settlement/facilitator.js";
 import { createFacilitatorStrategy } from "../settlement/loader.js";
-import { createGateway } from "../gateway.js";
 import type {
 	PaymentRequirementsPayload,
-	SettlementInfo,
-	SettlementStrategy,
-	SettlementVerification,
 	TollboothConfig,
 	TollboothGateway,
 } from "../types.js";
@@ -317,7 +314,7 @@ describe("custom settlement strategy", () => {
 			fetch: () => new Response("Internal Server Error", { status: 500 }),
 		});
 
-		let settleCalled = false;
+		const _settleCalled = false;
 		const strategyPath = `${import.meta.dir}/_test_custom_strategy_after.ts`;
 		// Store settle tracking on globalThis so the strategy module can access it
 		(globalThis as Record<string, unknown>).__customSettleCalled = false;
@@ -369,9 +366,9 @@ describe("custom settlement strategy", () => {
 
 			// 5xx upstream — should skip settlement
 			expect(res.status).toBe(500);
-			expect(
-				(globalThis as Record<string, unknown>).__customSettleCalled,
-			).toBe(false);
+			expect((globalThis as Record<string, unknown>).__customSettleCalled).toBe(
+				false,
+			);
 
 			const skipped = res.headers.get("x-tollbooth-settlement-skipped");
 			expect(skipped).toBeTruthy();

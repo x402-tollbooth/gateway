@@ -37,8 +37,7 @@ export class FacilitatorSettlement implements SettlementStrategy {
 		for (let i = 0; i < requirements.length; i++) {
 			const req = requirements[i];
 			const facilitator = this.facilitators[i] ?? this.facilitators[0];
-			const facilitatorUrl =
-				facilitator?.url ?? "https://x402.org/facilitator";
+			const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
 
 			let verification: Awaited<ReturnType<typeof verifyPayment>>;
 			try {
