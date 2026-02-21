@@ -4,7 +4,7 @@ import type {
 	RateLimitStore,
 	TollboothConfig,
 } from "../types.js";
-import { decodePaymentSignature } from "../x402/headers.js";
+import { extractPayerFromHeader } from "../x402/headers.js";
 import { parseWindow } from "./store.js";
 
 /**
@@ -17,21 +17,8 @@ import { parseWindow } from "./store.js";
 export function extractIdentity(request: Request): string {
 	const paymentHeader = request.headers.get("payment-signature");
 	if (paymentHeader) {
-		try {
-			const payload = decodePaymentSignature(paymentHeader) as Record<
-				string,
-				unknown
-			>;
-			// x402 payload contains the payer address in payload.payload.authorization.from
-			// or directly as payload.from — try common shapes
-			const payer =
-				getNestedString(payload, "payload", "authorization", "from") ??
-				getNestedString(payload, "from") ??
-				getNestedString(payload, "payer");
-			if (payer) return `payer:${payer.toLowerCase()}`;
-		} catch {
-			// Malformed header — fall through to IP
-		}
+		const payer = extractPayerFromHeader(paymentHeader);
+		if (payer) return `payer:${payer.toLowerCase()}`;
 	}
 
 	const forwarded = request.headers.get("x-forwarded-for");
@@ -43,20 +30,6 @@ export function extractIdentity(request: Request): string {
 	// Bun exposes the remote address on the server object, but it isn't on
 	// the Request itself. Fall back to a generic key.
 	return "ip:unknown";
-}
-
-function getNestedString(
-	obj: Record<string, unknown>,
-	...keys: string[]
-): string | undefined {
-	let current: unknown = obj;
-	for (const key of keys) {
-		if (current == null || typeof current !== "object") return undefined;
-		current = (current as Record<string, unknown>)[key];
-	}
-	return typeof current === "string" && current.length > 0
-		? current
-		: undefined;
 }
 
 /**

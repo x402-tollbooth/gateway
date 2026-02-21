@@ -17,9 +17,10 @@ import {
 	extractIdentity,
 	resolveRateLimit,
 } from "./ratelimit/check.js";
-import { MemoryRateLimitStore } from "./ratelimit/store.js";
+import { MemoryRateLimitStore, parseWindow } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
 import { matchRoute } from "./router/router.js";
+import { FacilitatorSettlement } from "./settlement/facilitator.js";
 import {
 	createFacilitatorStrategy,
 	initSettlementStrategy,
@@ -39,10 +40,14 @@ import type {
 	TollboothRequest,
 	UpstreamConfig,
 	UpstreamResponse,
+	VerificationCacheConfig,
+	VerificationCacheStore,
 } from "./types.js";
+import { MemoryVerificationCacheStore } from "./verification-cache/store.js";
 import {
 	decodePaymentSignature,
 	encodePaymentResponse,
+	extractPayerFromHeader,
 	HEADERS,
 } from "./x402/headers.js";
 import {
@@ -102,10 +107,15 @@ interface ErrorCtx {
  */
 export function createGateway(
 	config: TollboothConfig,
-	options?: { rateLimitStore?: RateLimitStore },
+	options?: {
+		rateLimitStore?: RateLimitStore;
+		verificationCacheStore?: VerificationCacheStore;
+	},
 ): TollboothGateway {
 	let server: ReturnType<typeof Bun.serve> | null = null;
 	const rateLimitStore = options?.rateLimitStore ?? new MemoryRateLimitStore();
+	const verificationCacheStore =
+		options?.verificationCacheStore ?? new MemoryVerificationCacheStore();
 
 	const discoveryPayload = config.gateway.discovery
 		? JSON.stringify(generateDiscoveryMetadata(config))
@@ -193,10 +203,12 @@ export function createGateway(
 		const settlementTiming = route.settlement ?? "before-response";
 
 		try {
+			// ── Identity (shared by rate limiting + verification cache) ──────
+			const identity = extractIdentity(request);
+
 			// ── Rate limiting ────────────────────────────────────────────────
 			const rateLimit = resolveRateLimit(route.rateLimit, config);
 			if (rateLimit) {
-				const identity = extractIdentity(request);
 				const rlResult = await checkRateLimit(
 					rateLimitStore,
 					identity,
@@ -329,8 +341,25 @@ export function createGateway(
 					config.settlement?.url,
 				);
 
-			// ── Verify payment ──────────────────────────────────────────────
-			const verification = await strategy.verify(payment, requirements);
+			// ── Verification cache config ────────────────────────────────────
+			const vcConfig = resolveVerificationCache(
+				route.verificationCache,
+				config,
+			);
+			const vcCacheKey =
+				identity.startsWith("payer:") && vcConfig
+					? `vc:${routeKey}:${identity}`
+					: null;
+
+			// ── Verify payment (with optional cache) ────────────────────────
+			const verification = await cachedVerify(
+				strategy,
+				payment,
+				paymentHeader,
+				requirements,
+				vcCacheKey,
+				vcConfig,
+			);
 
 			if (verification.payer) {
 				tollboothReq.payer = verification.payer;
@@ -796,8 +825,81 @@ export function createGateway(
 			if (rateLimitStore instanceof MemoryRateLimitStore) {
 				rateLimitStore.destroy();
 			}
+			if (verificationCacheStore instanceof MemoryVerificationCacheStore) {
+				verificationCacheStore.destroy();
+			}
 		},
 	};
+
+	/**
+	 * Verify a payment via the settlement strategy with optional caching.
+	 *
+	 * Caching only applies to FacilitatorSettlement (not custom strategies).
+	 * On cache hit, rebuilds a verification from the cached requirement index
+	 * without calling the facilitator /verify endpoint. On cache miss, verifies
+	 * normally and caches the result.
+	 *
+	 * Note: on cache hit the facilitator /verify call is skipped but /settle still
+	 * runs per-request, so invalid payments will fail at settlement time.
+	 */
+	async function cachedVerify(
+		strategy: SettlementStrategy,
+		payment: unknown,
+		paymentHeader: string,
+		requirements: PaymentRequirementsPayload[],
+		cacheKey: string | null,
+		cacheConfig: VerificationCacheConfig | undefined,
+	): Promise<SettlementVerification> {
+		const isFacilitator = strategy instanceof FacilitatorSettlement;
+
+		// Try cache (only for facilitator strategy)
+		if (isFacilitator && cacheKey && cacheConfig) {
+			const cached = await verificationCacheStore.get(cacheKey);
+			if (cached) {
+				const idx = cached.requirementIndex;
+				if (idx >= requirements.length) {
+					log.warn("verification_cache_stale", {
+						route: cacheKey,
+						cachedIndex: idx,
+						requirementsCount: requirements.length,
+					});
+				}
+				const payer = extractPayerFromHeader(paymentHeader);
+				log.info("verification_cache_hit", { route: cacheKey });
+				return strategy.rebuildVerification(
+					payment,
+					payer,
+					idx,
+					requirements,
+				);
+			}
+		}
+
+		// Cache miss — full verify via strategy
+		if (cacheKey) {
+			log.debug("verification_cache_miss", { route: cacheKey });
+		}
+		const verification = await strategy.verify(payment, requirements);
+
+		// Cache successful verification (facilitator only)
+		if (isFacilitator && cacheKey && cacheConfig) {
+			const idx = FacilitatorSettlement.getRequirementIndex(verification);
+			if (idx !== undefined) {
+				const ttlMs = parseWindow(cacheConfig.ttl);
+				await verificationCacheStore.set(
+					cacheKey,
+					{ requirementIndex: idx },
+					ttlMs,
+				);
+				log.debug("verification_cache_set", {
+					route: cacheKey,
+					ttl: cacheConfig.ttl,
+				});
+			}
+		}
+
+		return verification;
+	}
 }
 
 function shouldSettleByDefault(status: number): boolean {
@@ -820,4 +922,11 @@ function isUpstreamResponse(result: unknown): result is UpstreamResponse {
 		"status" in result &&
 		"headers" in result
 	);
+}
+
+function resolveVerificationCache(
+	routeCache: VerificationCacheConfig | undefined,
+	config: TollboothConfig,
+): VerificationCacheConfig | undefined {
+	return routeCache ?? config.defaults.verificationCache;
 }

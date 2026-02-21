@@ -37,6 +37,7 @@ export interface DefaultsConfig {
 	price: string;
 	timeout: number;
 	rateLimit?: RateLimitConfig;
+	verificationCache?: VerificationCacheConfig;
 }
 
 export interface UpstreamConfig {
@@ -60,6 +61,7 @@ export interface RouteConfig {
 	metadata?: Record<string, unknown>;
 	facilitator?: string | FacilitatorMapping;
 	rateLimit?: RateLimitConfig;
+	verificationCache?: VerificationCacheConfig;
 	models?: Record<string, string>;
 	settlement?: "before-response" | "after-response";
 }
@@ -251,6 +253,21 @@ export interface RateLimitResult {
 
 export interface RateLimitStore {
 	check(key: string, limit: number, windowMs: number): Promise<RateLimitResult>;
+}
+
+// ── Verification Cache ──────────────────────────────────────────────────────
+
+export interface VerificationCacheConfig {
+	ttl: string;
+}
+
+export interface VerificationCacheEntry {
+	requirementIndex: number;
+}
+
+export interface VerificationCacheStore {
+	get(key: string): Promise<VerificationCacheEntry | undefined>;
+	set(key: string, entry: VerificationCacheEntry, ttlMs: number): Promise<void>;
 }
 
 // ── Gateway ──────────────────────────────────────────────────────────────────

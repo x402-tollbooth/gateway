@@ -38,3 +38,37 @@ export function encodePaymentResponse(response: unknown): string {
 	const json = JSON.stringify(response);
 	return btoa(json);
 }
+
+/**
+ * Extract the payer wallet address from a base64-encoded payment-signature header.
+ * Checks common x402 payload shapes: payload.authorization.from, from, payer.
+ * Returns undefined if the header cannot be parsed or doesn't contain a payer.
+ */
+export function extractPayerFromHeader(
+	paymentHeader: string,
+): string | undefined {
+	try {
+		const payload = JSON.parse(atob(paymentHeader)) as Record<string, unknown>;
+		return (
+			getNestedString(payload, "payload", "authorization", "from") ??
+			getNestedString(payload, "from") ??
+			getNestedString(payload, "payer")
+		);
+	} catch {
+		return undefined;
+	}
+}
+
+function getNestedString(
+	obj: Record<string, unknown>,
+	...keys: string[]
+): string | undefined {
+	let current: unknown = obj;
+	for (const key of keys) {
+		if (current == null || typeof current !== "object") return undefined;
+		current = (current as Record<string, unknown>)[key];
+	}
+	return typeof current === "string" && current.length > 0
+		? current
+		: undefined;
+}
