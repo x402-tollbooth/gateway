@@ -862,6 +862,13 @@ export function createGateway(
 				if (!paymentHeader) return null;
 				const paymentPayload = decodePaymentSignature(paymentHeader);
 				const idx = cached.requirementIndex;
+				if (idx >= requirements.length) {
+					log.warn("verification_cache_stale", {
+						route: cacheKey,
+						cachedIndex: idx,
+						requirementsCount: requirements.length,
+					});
+				}
 				const facilitator = facilitators[idx] ?? facilitators[0];
 				log.info("verification_cache_hit", { route: cacheKey });
 				return {
