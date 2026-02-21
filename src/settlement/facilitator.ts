@@ -15,6 +15,7 @@ import { PaymentError } from "../x402/middleware.js";
 interface FacilitatorVerification extends SettlementVerification {
 	paymentPayload: unknown;
 	requirement: PaymentRequirementsPayload;
+	requirementIndex: number;
 	facilitator: FacilitatorConfig;
 	facilitatorUrl: string;
 }
@@ -27,6 +28,42 @@ interface FacilitatorVerification extends SettlementVerification {
  */
 export class FacilitatorSettlement implements SettlementStrategy {
 	constructor(private facilitators: FacilitatorConfig[]) {}
+
+	/**
+	 * Reconstruct a verification from cached data (skipping the facilitator
+	 * /verify call). Used by the verification cache on cache hit.
+	 */
+	rebuildVerification(
+		payment: unknown,
+		payer: string | undefined,
+		requirementIndex: number,
+		requirements: PaymentRequirementsPayload[],
+	): SettlementVerification {
+		const facilitator =
+			this.facilitators[requirementIndex] ?? this.facilitators[0];
+		const facilitatorUrl =
+			facilitator?.url ?? "https://x402.org/facilitator";
+		return {
+			payer,
+			paymentPayload: payment,
+			requirement: requirements[requirementIndex] ?? requirements[0],
+			requirementIndex,
+			facilitator,
+			facilitatorUrl,
+		} satisfies FacilitatorVerification;
+	}
+
+	/**
+	 * Extract the requirement index from a verification produced by this
+	 * strategy. Returns undefined for foreign verifications.
+	 */
+	static getRequirementIndex(
+		verification: SettlementVerification,
+	): number | undefined {
+		return isFacilitatorVerification(verification)
+			? verification.requirementIndex
+			: undefined;
+	}
 
 	async verify(
 		payment: unknown,
@@ -63,6 +100,7 @@ export class FacilitatorSettlement implements SettlementStrategy {
 				payer: verification.payer,
 				paymentPayload: payment,
 				requirement: req,
+				requirementIndex: i,
 				facilitator,
 				facilitatorUrl,
 			};
