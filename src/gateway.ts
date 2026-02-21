@@ -20,13 +20,21 @@ import {
 import { MemoryRateLimitStore, parseWindow } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
 import { matchRoute } from "./router/router.js";
+import { FacilitatorSettlement } from "./settlement/facilitator.js";
+import {
+	createFacilitatorStrategy,
+	initSettlementStrategy,
+} from "./settlement/loader.js";
 import type {
+	PaymentRequirementsPayload,
 	PayToSplit,
 	RateLimitStore,
 	ResolvedRoute,
 	RouteConfig,
 	SettlementDecision,
 	SettlementInfo,
+	SettlementStrategy,
+	SettlementVerification,
 	TollboothConfig,
 	TollboothGateway,
 	TollboothRequest,
@@ -37,10 +45,6 @@ import type {
 } from "./types.js";
 import { MemoryVerificationCacheStore } from "./verification-cache/store.js";
 import {
-	DEFAULT_FACILITATOR,
-	resolveFacilitatorUrl,
-} from "./x402/facilitator.js";
-import {
 	decodePaymentSignature,
 	encodePaymentResponse,
 	extractPayerFromHeader,
@@ -49,11 +53,7 @@ import {
 import {
 	buildPaymentRequirements,
 	createPaymentRequiredResponse,
-	executeSettlement,
 	PaymentError,
-	type PaymentRequirementsPayload,
-	processVerification,
-	type VerificationResult,
 } from "./x402/middleware.js";
 
 interface AfterResponseCtx {
@@ -66,7 +66,8 @@ interface AfterResponseCtx {
 	resolvedRoute: ResolvedRoute;
 	rawBody: ArrayBuffer | undefined;
 	requirements: PaymentRequirementsPayload[];
-	facilitators: { url: string }[];
+	strategy: SettlementStrategy;
+	verification: SettlementVerification;
 	price: {
 		amount: bigint;
 		asset: string;
@@ -75,8 +76,6 @@ interface AfterResponseCtx {
 	};
 	url: URL;
 	start: number;
-	vcCacheKey: string | null;
-	vcConfig: VerificationCacheConfig | undefined;
 }
 
 interface FinalResponseCtx {
@@ -121,6 +120,9 @@ export function createGateway(
 	const discoveryPayload = config.gateway.discovery
 		? JSON.stringify(generateDiscoveryMetadata(config))
 		: null;
+
+	// Pre-loaded custom strategy (set during start())
+	let customStrategy: SettlementStrategy | null = null;
 
 	async function handleRequest(request: Request): Promise<Response> {
 		const start = performance.now();
@@ -198,7 +200,7 @@ export function createGateway(
 		};
 
 		let resolvedRoute: ResolvedRoute | undefined;
-		const settlementStrategy = route.settlement ?? "before-response";
+		const settlementTiming = route.settlement ?? "before-response";
 
 		try {
 			// ── Identity (shared by rate limiting + verification cache) ──────
@@ -322,14 +324,22 @@ export function createGateway(
 				accepts,
 			);
 
-			const facilitators = accepts.map((a) => ({
-				url: resolveFacilitatorUrl(
-					a.network,
-					a.asset,
+			// ── Extract payment from request ────────────────────────────────
+			const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
+			if (!paymentHeader) {
+				return createPaymentRequiredResponse(requirements);
+			}
+			const payment = decodePaymentSignature(paymentHeader);
+
+			// ── Resolve settlement strategy ─────────────────────────────────
+			const strategy =
+				customStrategy ??
+				createFacilitatorStrategy(
+					accepts,
 					route.facilitator,
 					config.facilitator,
-				),
-			}));
+					config.settlement?.url,
+				);
 
 			// ── Verification cache config ────────────────────────────────────
 			const vcConfig = resolveVerificationCache(
@@ -341,8 +351,22 @@ export function createGateway(
 					? `vc:${routeKey}:${identity}`
 					: null;
 
-			// ── Branch on settlement strategy ────────────────────────────────
-			if (settlementStrategy === "after-response") {
+			// ── Verify payment (with optional cache) ────────────────────────
+			const verification = await cachedVerify(
+				strategy,
+				payment,
+				paymentHeader,
+				requirements,
+				vcCacheKey,
+				vcConfig,
+			);
+
+			if (verification.payer) {
+				tollboothReq.payer = verification.payer;
+			}
+
+			// ── Branch on settlement timing ─────────────────────────────────
+			if (settlementTiming === "after-response") {
 				return await handleAfterResponse({
 					request,
 					tollboothReq,
@@ -351,32 +375,18 @@ export function createGateway(
 					upstreamPath,
 					rawBody,
 					requirements,
-					facilitators,
+					strategy,
+					verification,
 					price,
 					route,
 					routeKey,
 					url,
 					start,
-					vcCacheKey,
-					vcConfig,
 				});
 			}
 
-			// ── before-response (default) ────────────────────────────────────
-			const verification = await cachedVerification(
-				request,
-				requirements,
-				facilitators,
-				vcCacheKey,
-				vcConfig,
-			);
-
-			if (!verification) {
-				return createPaymentRequiredResponse(requirements);
-			}
-
-			const paymentResult = await executeSettlement(verification);
-			const settlement = paymentResult.settlement;
+			// ── before-response (default): settle immediately ───────────────
+			const settlement = await strategy.settle(verification);
 			tollboothReq.payer = settlement.payer;
 
 			log.info("payment_settled", {
@@ -456,8 +466,8 @@ export function createGateway(
 	}
 
 	/**
-	 * Handle the after-response settlement strategy.
-	 * Verify → proxy → conditionally settle based on upstream response.
+	 * Handle the after-response settlement timing.
+	 * Payment already verified → proxy → conditionally settle based on upstream response.
 	 */
 	async function handleAfterResponse(ctx: AfterResponseCtx): Promise<Response> {
 		const {
@@ -466,34 +476,15 @@ export function createGateway(
 			resolvedRoute,
 			upstream,
 			upstreamPath,
-			requirements,
-			facilitators,
+			strategy,
+			verification,
 			price,
 			route,
 			routeKey,
 			url,
 			start,
-			vcCacheKey,
-			vcConfig,
 		} = ctx;
 		let rawBody = ctx.rawBody;
-
-		// ── Verify only (no settle yet) ──────────────────────────────────
-		const verification = await cachedVerification(
-			request,
-			requirements,
-			facilitators,
-			vcCacheKey,
-			vcConfig,
-		);
-
-		if (!verification) {
-			return createPaymentRequiredResponse(requirements);
-		}
-
-		if (verification.payer) {
-			tollboothReq.payer = verification.payer;
-		}
 
 		// ── Proxy to upstream ────────────────────────────────────────────
 		if (!rawBody && !["GET", "HEAD"].includes(request.method.toUpperCase())) {
@@ -584,9 +575,8 @@ export function createGateway(
 		}
 
 		if (shouldSettle) {
-			// ── Settle ───────────────────────────────────────────────────
-			const paymentResult = await executeSettlement(verification);
-			const settlement = paymentResult.settlement;
+			// ── Settle via strategy ──────────────────────────────────────
+			const settlement = await strategy.settle(verification);
 			tollboothReq.payer = settlement.payer;
 
 			log.info("payment_settled", {
@@ -809,6 +799,9 @@ export function createGateway(
 			return config;
 		},
 		async start(options?: { silent?: boolean }) {
+			// Load custom settlement strategy if configured
+			customStrategy = await initSettlementStrategy(config);
+
 			server = Bun.serve({
 				port: config.gateway.port,
 				hostname: config.gateway.hostname,
@@ -839,28 +832,30 @@ export function createGateway(
 	};
 
 	/**
-	 * Wrap processVerification with optional caching.
-	 * On cache hit, skip the facilitator /verify call and build a VerificationResult
-	 * from the cached requirement index + current request's payment payload.
-	 * On cache miss, verify normally and cache the result.
+	 * Verify a payment via the settlement strategy with optional caching.
+	 *
+	 * Caching only applies to FacilitatorSettlement (not custom strategies).
+	 * On cache hit, rebuilds a verification from the cached requirement index
+	 * without calling the facilitator /verify endpoint. On cache miss, verifies
+	 * normally and caches the result.
 	 *
 	 * Note: on cache hit the facilitator /verify call is skipped but /settle still
 	 * runs per-request, so invalid payments will fail at settlement time.
 	 */
-	async function cachedVerification(
-		request: Request,
+	async function cachedVerify(
+		strategy: SettlementStrategy,
+		payment: unknown,
+		paymentHeader: string,
 		requirements: PaymentRequirementsPayload[],
-		facilitators: { url: string }[],
 		cacheKey: string | null,
 		cacheConfig: VerificationCacheConfig | undefined,
-	): Promise<VerificationResult | null> {
-		// Try cache
-		if (cacheKey && cacheConfig) {
+	): Promise<SettlementVerification> {
+		const isFacilitator = strategy instanceof FacilitatorSettlement;
+
+		// Try cache (only for facilitator strategy)
+		if (isFacilitator && cacheKey && cacheConfig) {
 			const cached = await verificationCacheStore.get(cacheKey);
 			if (cached) {
-				const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
-				if (!paymentHeader) return null;
-				const paymentPayload = decodePaymentSignature(paymentHeader);
 				const idx = cached.requirementIndex;
 				if (idx >= requirements.length) {
 					log.warn("verification_cache_stale", {
@@ -869,41 +864,33 @@ export function createGateway(
 						requirementsCount: requirements.length,
 					});
 				}
-				const facilitator = facilitators[idx] ?? facilitators[0];
+				const payer = extractPayerFromHeader(paymentHeader);
 				log.info("verification_cache_hit", { route: cacheKey });
-				return {
-					payer: extractPayerFromHeader(paymentHeader),
-					paymentPayload,
-					requirement: requirements[idx] ?? requirements[0],
-					facilitator,
-					facilitatorUrl: facilitator.url ?? DEFAULT_FACILITATOR,
-				};
+				return strategy.rebuildVerification(payment, payer, idx, requirements);
 			}
 		}
 
-		// Cache miss — verify with facilitator
+		// Cache miss — full verify via strategy
 		if (cacheKey) {
 			log.debug("verification_cache_miss", { route: cacheKey });
 		}
-		const verification = await processVerification(
-			request,
-			requirements,
-			facilitators,
-		);
+		const verification = await strategy.verify(payment, requirements);
 
-		// Cache successful verification
-		if (verification && cacheKey && cacheConfig) {
-			const idx = requirements.indexOf(verification.requirement);
-			const ttlMs = parseWindow(cacheConfig.ttl);
-			await verificationCacheStore.set(
-				cacheKey,
-				{ requirementIndex: idx >= 0 ? idx : 0 },
-				ttlMs,
-			);
-			log.debug("verification_cache_set", {
-				route: cacheKey,
-				ttl: cacheConfig.ttl,
-			});
+		// Cache successful verification (facilitator only)
+		if (isFacilitator && cacheKey && cacheConfig) {
+			const idx = FacilitatorSettlement.getRequirementIndex(verification);
+			if (idx !== undefined) {
+				const ttlMs = parseWindow(cacheConfig.ttl);
+				await verificationCacheStore.set(
+					cacheKey,
+					{ requirementIndex: idx },
+					ttlMs,
+				);
+				log.debug("verification_cache_set", {
+					route: cacheKey,
+					ttl: cacheConfig.ttl,
+				});
+			}
 		}
 
 		return verification;

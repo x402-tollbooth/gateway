@@ -280,6 +280,7 @@ The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed p
 - **Path rewriting** — your public API shape doesn't need to match upstream
 - **Env var interpolation** — `${API_KEY}` in config, secrets stay in `.env`
 - **Custom facilitator** — point to a self-hosted or alternative facilitator
+- **Pluggable settlement** — swap the default facilitator for a custom settlement backend
 
 ## Custom Facilitator
 
@@ -305,6 +306,60 @@ routes:
 ```
 
 Route-level `facilitator` takes precedence over the top-level setting. If neither is specified, the default `https://x402.org/facilitator` is used.
+
+## Settlement Strategy
+
+Settlement is pluggable. By default tollbooth uses an x402 facilitator to verify and settle payments, but you can point it at a self-hosted facilitator or provide a completely custom settlement module.
+
+### Facilitator (default)
+
+```yaml
+# Explicit facilitator URL (equivalent to the top-level facilitator field)
+settlement:
+  strategy: facilitator
+  url: "https://x402.org/facilitator"
+```
+
+`settlement.url` takes precedence over the legacy `facilitator` field. Route-level `facilitator` overrides still apply.
+
+### Custom module
+
+Write your own settlement backend by implementing the `SettlementStrategy` interface:
+
+```yaml
+settlement:
+  strategy: custom
+  module: "./settlement/my-strategy.ts"
+```
+
+```ts
+// settlement/my-strategy.ts
+import type { SettlementStrategy } from "tollbooth";
+
+const strategy: SettlementStrategy = {
+  async verify(payment, requirements) {
+    // Verify the payment payload against the requirements.
+    // Return a SettlementVerification with at least { payer }.
+    // Throw PaymentError to reject.
+    return { payer: "0x..." };
+  },
+
+  async settle(verification) {
+    // Execute the payment. Called after verify() succeeds.
+    // Return SettlementInfo with payer, amount, transaction, network.
+    return {
+      payer: verification.payer!,
+      amount: "10000",
+      transaction: "0x...",
+      network: "base",
+    };
+  },
+};
+
+export default strategy;
+```
+
+The `verify` → `settle` split lets tollbooth call them at different times depending on the route's `settlement` timing (`before-response` or `after-response`). Your strategy works with both modes automatically.
 
 ## Token-Based Routes
 
@@ -523,6 +578,7 @@ src/
 ├── pricing/         # Price resolution (static, match, fn), unit conversion
 ├── openai/          # Token-based route handler, model extraction
 ├── x402/            # 402 responses, facilitator verify/settle, V2 headers
+├── settlement/      # Pluggable settlement strategy (facilitator, custom)
 ├── proxy/           # Upstream forwarding, lazy body buffering
 ├── hooks/           # Lifecycle hook loading and execution
 ├── discovery/       # V2 auto-discovery metadata

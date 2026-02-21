@@ -63,6 +63,18 @@ const facilitatorMappingSchema = z.object({
 
 const facilitatorSchema = z.union([z.string().url(), facilitatorMappingSchema]);
 
+const settlementStrategySchema = z
+	.object({
+		strategy: z.enum(["facilitator", "custom"]),
+		url: z.string().url().optional(),
+		module: z.string().min(1).optional(),
+	})
+	.strict()
+	.refine(
+		(data) => data.strategy !== "custom" || !!data.module,
+		"Custom settlement strategy requires a 'module' path",
+	);
+
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
@@ -116,6 +128,8 @@ export const tollboothConfigSchema = z.object({
 	hooks: routeHooksSchema,
 
 	facilitator: facilitatorSchema.optional(),
+
+	settlement: settlementStrategySchema.optional(),
 });
 
 export type TollboothConfigInput = z.input<typeof tollboothConfigSchema>;

@@ -14,6 +14,7 @@ export interface TollboothConfig {
 	routes: Record<string, RouteConfig>;
 	hooks?: GlobalHooksConfig;
 	facilitator?: string | FacilitatorMapping;
+	settlement?: SettlementStrategyConfig;
 }
 
 export interface GatewayConfig {
@@ -205,6 +206,41 @@ export interface PricingFnInput {
 export type PricingFn = (
 	input: PricingFnInput,
 ) => string | number | Promise<string | number>;
+
+// ── Payment Requirements ────────────────────────────────────────────────────
+
+export interface PaymentRequirementsPayload {
+	scheme: string;
+	network: string;
+	maxAmountRequired: string;
+	resource: string;
+	description: string;
+	payTo: string;
+	maxTimeoutSeconds: number;
+	asset: string;
+	// EIP-712 domain info required by the facilitator to verify the signature
+	extra?: { name: string; version: string };
+}
+
+// ── Settlement Strategy ─────────────────────────────────────────────────────
+
+export interface SettlementVerification {
+	payer?: string;
+}
+
+export interface SettlementStrategy {
+	verify(
+		payment: unknown,
+		requirements: PaymentRequirementsPayload[],
+	): Promise<SettlementVerification>;
+	settle(verification: SettlementVerification): Promise<SettlementInfo>;
+}
+
+export interface SettlementStrategyConfig {
+	strategy: "facilitator" | "custom";
+	url?: string;
+	module?: string;
+}
 
 // ── Rate Limiting ────────────────────────────────────────────────────────────
 

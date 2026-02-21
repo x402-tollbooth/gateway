@@ -46,12 +46,14 @@ export function generateDiscoveryMetadata(
 		}
 
 		// Resolve per-chain facilitator for each accepted payment
+		// settlement.url takes precedence over legacy facilitator field
+		const globalFacilitator = config.settlement?.url ?? config.facilitator;
 		const acceptsWithFacilitator = accepts.map((a) => {
 			const url = resolveFacilitatorUrl(
 				a.network,
 				a.asset,
 				route.facilitator,
-				config.facilitator,
+				globalFacilitator,
 			);
 			return { asset: a.asset, network: a.network, facilitator: url };
 		});
