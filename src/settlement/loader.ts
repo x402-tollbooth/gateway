@@ -1,6 +1,8 @@
+import { log } from "../logger.js";
 import type {
 	AcceptedPayment,
 	FacilitatorMapping,
+	RouteConfig,
 	SettlementStrategy,
 	SettlementStrategyConfig,
 } from "../types.js";
@@ -74,11 +76,31 @@ export function createFacilitatorStrategy(
  */
 export async function initSettlementStrategy(config: {
 	settlement?: SettlementStrategyConfig;
+	facilitator?: string | FacilitatorMapping;
+	routes?: Record<string, RouteConfig>;
 }): Promise<SettlementStrategy | null> {
 	if (config.settlement?.strategy === "custom") {
 		if (!config.settlement.module) {
 			throw new Error("Custom settlement strategy requires a 'module' path");
 		}
+
+		// Warn about ignored facilitator overrides
+		if (config.facilitator) {
+			log.warn("custom_strategy_ignores_facilitator", {
+				msg: "Top-level 'facilitator' is ignored when settlement.strategy is 'custom'",
+			});
+		}
+		if (config.routes) {
+			for (const [key, route] of Object.entries(config.routes)) {
+				if (route.facilitator) {
+					log.warn("custom_strategy_ignores_facilitator", {
+						route: key,
+						msg: "Route-level 'facilitator' is ignored when settlement.strategy is 'custom'",
+					});
+				}
+			}
+		}
+
 		return loadCustomStrategy(config.settlement.module);
 	}
 	return null;
