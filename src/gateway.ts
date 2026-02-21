@@ -339,14 +339,52 @@ export function createGateway(
 				? parseDuration(timeDuration)
 				: undefined;
 
-			// ── Time-based pricing: skip payment when session is still active ──
-			if (timeSessionDurationMs != null) {
-				const payer = extractPayerFromPaymentHeader(request);
-				if (payer) {
-					const sessionKey = buildSessionKey(routeKey, payer);
+			// ── x402 payment flow ────────────────────────────────────────────
+			const accepts = route.accepts ?? config.accepts;
+			const requirements = buildPaymentRequirements(
+				price,
+				url.pathname,
+				routeKey,
+				config.defaults.timeout,
+				accepts,
+			);
+
+			// ── Extract payment from request ────────────────────────────────
+			const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
+			if (!paymentHeader && timeSessionDurationMs == null) {
+				return createPaymentRequiredResponse(requirements);
+			}
+			const payment = paymentHeader
+				? decodePaymentSignature(paymentHeader)
+				: null;
+
+			// ── Resolve settlement strategy ─────────────────────────────────
+			const strategy =
+				customStrategy ??
+				createFacilitatorStrategy(
+					accepts,
+					route.facilitator,
+					config.facilitator,
+					config.settlement?.url,
+				);
+
+			// ── Time-based pricing: skip settlement when session is still active ──
+			if (timeSessionDurationMs != null && payment) {
+				const claimedPayer = extractPayerFromPaymentHeader(request);
+				if (claimedPayer) {
+					const sessionKey = buildSessionKey(routeKey, claimedPayer);
 					const expiresAt = await timeSessionStore.get(sessionKey);
 					if (expiresAt != null) {
-						tollboothReq.payer = payer;
+						// Session exists — verify the signature is authentic before
+						// granting access (prevents forged payment-signature headers).
+						const verification = await strategy.verify(payment, requirements);
+
+						tollboothReq.payer = verification.payer ?? claimedPayer;
+
+						log.debug("time_session_active", {
+							routeKey,
+							payer: tollboothReq.payer,
+						});
 
 						if (
 							!rawBody &&
@@ -389,32 +427,10 @@ export function createGateway(
 				}
 			}
 
-			// ── x402 payment flow ────────────────────────────────────────────
-			const accepts = route.accepts ?? config.accepts;
-			const requirements = buildPaymentRequirements(
-				price,
-				url.pathname,
-				routeKey,
-				config.defaults.timeout,
-				accepts,
-			);
-
-			// ── Extract payment from request ────────────────────────────────
-			const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
-			if (!paymentHeader) {
+			// No payment header → require payment
+			if (!paymentHeader || !payment) {
 				return createPaymentRequiredResponse(requirements);
 			}
-			const payment = decodePaymentSignature(paymentHeader);
-
-			// ── Resolve settlement strategy ─────────────────────────────────
-			const strategy =
-				customStrategy ??
-				createFacilitatorStrategy(
-					accepts,
-					route.facilitator,
-					config.facilitator,
-					config.settlement?.url,
-				);
 
 			// ── Verification cache config ────────────────────────────────────
 			const vcConfig = resolveVerificationCache(
