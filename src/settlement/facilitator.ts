@@ -41,16 +41,16 @@ export class FacilitatorSettlement implements SettlementStrategy {
 	): SettlementVerification {
 		const facilitator =
 			this.facilitators[requirementIndex] ?? this.facilitators[0];
-		const facilitatorUrl =
-			facilitator?.url ?? "https://x402.org/facilitator";
-		return {
+		const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
+		const result: FacilitatorVerification = {
 			payer,
 			paymentPayload: payment,
 			requirement: requirements[requirementIndex] ?? requirements[0],
 			requirementIndex,
 			facilitator,
 			facilitatorUrl,
-		} satisfies FacilitatorVerification;
+		};
+		return result;
 	}
 
 	/**

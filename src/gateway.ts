@@ -866,12 +866,7 @@ export function createGateway(
 				}
 				const payer = extractPayerFromHeader(paymentHeader);
 				log.info("verification_cache_hit", { route: cacheKey });
-				return strategy.rebuildVerification(
-					payment,
-					payer,
-					idx,
-					requirements,
-				);
+				return strategy.rebuildVerification(payment, payer, idx, requirements);
 			}
 		}
 
