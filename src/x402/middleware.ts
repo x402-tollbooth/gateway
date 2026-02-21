@@ -1,6 +1,7 @@
 import type { ResolvedPrice } from "../pricing/resolver.js";
 import type { AcceptedPayment, SettlementInfo } from "../types.js";
 import {
+	DEFAULT_FACILITATOR,
 	type FacilitatorConfig,
 	settlePayment,
 	toSettlementInfo,
@@ -130,7 +131,7 @@ export async function processVerification(
 	for (let i = 0; i < requirements.length; i++) {
 		const req = requirements[i];
 		const facilitator = facilitators[i] ?? facilitators[0];
-		const facilitatorUrl = facilitator?.url ?? "https://x402.org/facilitator";
+		const facilitatorUrl = facilitator?.url ?? DEFAULT_FACILITATOR;
 
 		let verification: Awaited<ReturnType<typeof verifyPayment>>;
 		try {

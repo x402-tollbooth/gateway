@@ -1,6 +1,6 @@
 import type { FacilitatorMapping, SettlementInfo } from "../types.js";
 
-const DEFAULT_FACILITATOR = "https://x402.org/facilitator";
+export const DEFAULT_FACILITATOR = "https://x402.org/facilitator";
 
 export interface FacilitatorConfig {
 	url?: string;

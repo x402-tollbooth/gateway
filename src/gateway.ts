@@ -36,7 +36,10 @@ import type {
 	VerificationCacheStore,
 } from "./types.js";
 import { MemoryVerificationCacheStore } from "./verification-cache/store.js";
-import { resolveFacilitatorUrl } from "./x402/facilitator.js";
+import {
+	DEFAULT_FACILITATOR,
+	resolveFacilitatorUrl,
+} from "./x402/facilitator.js";
 import {
 	decodePaymentSignature,
 	encodePaymentResponse,
@@ -866,7 +869,7 @@ export function createGateway(
 					paymentPayload,
 					requirement: requirements[idx] ?? requirements[0],
 					facilitator,
-					facilitatorUrl: facilitator.url ?? "https://x402.org/facilitator",
+					facilitatorUrl: facilitator.url ?? DEFAULT_FACILITATOR,
 				};
 			}
 		}
