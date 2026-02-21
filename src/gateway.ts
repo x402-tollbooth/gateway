@@ -871,6 +871,9 @@ export function createGateway(
 		}
 
 		// Cache miss — verify with facilitator
+		if (cacheKey) {
+			log.debug("verification_cache_miss", { route: cacheKey });
+		}
 		const verification = await processVerification(
 			request,
 			requirements,
@@ -886,6 +889,10 @@ export function createGateway(
 				{ requirementIndex: idx >= 0 ? idx : 0 },
 				ttlMs,
 			);
+			log.debug("verification_cache_set", {
+				route: cacheKey,
+				ttl: cacheConfig.ttl,
+			});
 		}
 
 		return verification;
