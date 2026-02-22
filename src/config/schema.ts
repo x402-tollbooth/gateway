@@ -124,6 +124,29 @@ const upstreamConfigSchema = z.object({
 	url: z.string().url(),
 	headers: z.record(z.string()).optional(),
 	timeout: z.number().positive().optional(),
+	openapi: z
+		.string()
+		.min(1)
+		.refine(
+			(s) =>
+				s.startsWith("http://") ||
+				s.startsWith("https://") ||
+				s.startsWith("/") ||
+				s.startsWith("./") ||
+				s.startsWith("../") ||
+				s.endsWith(".json") ||
+				s.endsWith(".yaml") ||
+				s.endsWith(".yml"),
+			"Must be a URL (http/https) or a file path (.json/.yaml/.yml)",
+		)
+		.optional(),
+	defaultPrice: z
+		.string()
+		.regex(
+			/^\$?\d+(\.\d+)?$/,
+			'Must be a price like "$0.01", "0.01", or "10000"',
+		)
+		.optional(),
 });
 
 export const tollboothConfigSchema = z.object({
