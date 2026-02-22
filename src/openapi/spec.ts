@@ -157,7 +157,11 @@ export function buildOpenAPISpec(config: TollboothConfig): OpenAPISpec {
 			extensions["x-x402-pricing-type"] = "token-based";
 		} else if (route.match) {
 			extensions["x-x402-pricing-type"] = "match";
-		} else if (route.price && typeof route.price === "object" && "fn" in route.price) {
+		} else if (
+			route.price &&
+			typeof route.price === "object" &&
+			"fn" in route.price
+		) {
 			extensions["x-x402-pricing-type"] = "dynamic";
 		}
 

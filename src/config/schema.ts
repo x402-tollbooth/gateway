@@ -142,7 +142,10 @@ const upstreamConfigSchema = z.object({
 		.optional(),
 	defaultPrice: z
 		.string()
-		.regex(/^\$?\d+(\.\d+)?$/, 'Must be a price like "$0.01", "0.01", or "10000"')
+		.regex(
+			/^\$?\d+(\.\d+)?$/,
+			'Must be a price like "$0.01", "0.01", or "10000"',
+		)
 		.optional(),
 });
 
