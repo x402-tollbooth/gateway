@@ -124,6 +124,8 @@ const upstreamConfigSchema = z.object({
 	url: z.string().url(),
 	headers: z.record(z.string()).optional(),
 	timeout: z.number().positive().optional(),
+	openapi: z.string().optional(),
+	defaultPrice: z.string().optional(),
 });
 
 export const tollboothConfigSchema = z.object({

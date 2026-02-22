@@ -8,6 +8,7 @@ import {
 } from "./hooks/runner.js";
 import { log } from "./logger.js";
 import { extractModel, resolveOpenAIPrice } from "./openai/handler.js";
+import { buildExportSpec, importOpenAPIRoutes } from "./openapi/spec.js";
 import { getEffectiveRoutePricing } from "./pricing/config.js";
 import { formatPrice } from "./pricing/parser.js";
 import { resolvePrice } from "./pricing/resolver.js";
@@ -136,6 +137,9 @@ export function createGateway(
 	// Pre-loaded custom strategy (set during start())
 	let customStrategy: SettlementStrategy | null = null;
 
+	// Cached OpenAPI export spec (built during start())
+	let openapiPayload: string | null = null;
+
 	async function handleRequest(request: Request): Promise<Response> {
 		const start = performance.now();
 		const url = new URL(request.url);
@@ -150,6 +154,13 @@ export function createGateway(
 		// Health check
 		if (url.pathname === "/health") {
 			return new Response(JSON.stringify({ status: "ok" }), {
+				headers: { "Content-Type": "application/json" },
+			});
+		}
+
+		// OpenAPI spec export
+		if (openapiPayload && url.pathname === "/.well-known/openapi.json") {
+			return new Response(openapiPayload, {
 				headers: { "Content-Type": "application/json" },
 			});
 		}
@@ -961,6 +972,21 @@ export function createGateway(
 			// Load custom settlement strategy if configured
 			customStrategy = await initSettlementStrategy(config);
 
+			// Import routes from upstream OpenAPI specs
+			await importOpenAPIRoutes(config);
+
+			// Build OpenAPI export spec (after import so all routes are included)
+			if (config.gateway.discovery) {
+				try {
+					const spec = await buildExportSpec(config);
+					openapiPayload = JSON.stringify(spec);
+				} catch (err) {
+					log.warn("openapi_export_failed", {
+						error: err instanceof Error ? err.message : String(err),
+					});
+				}
+			}
+
 			server = Bun.serve({
 				port: config.gateway.port,
 				hostname: config.gateway.hostname,
@@ -973,6 +999,11 @@ export function createGateway(
 					...(discoveryPayload
 						? {
 								discovery: `http://localhost:${server.port}/.well-known/x402`,
+							}
+						: {}),
+					...(openapiPayload
+						? {
+								openapi: `http://localhost:${server.port}/.well-known/openapi.json`,
 							}
 						: {}),
 				});

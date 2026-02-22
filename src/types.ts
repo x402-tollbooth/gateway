@@ -44,6 +44,8 @@ export interface UpstreamConfig {
 	url: string;
 	headers?: Record<string, string>;
 	timeout?: number;
+	openapi?: string;
+	defaultPrice?: string;
 }
 
 // ── Route Types ──────────────────────────────────────────────────────────────
