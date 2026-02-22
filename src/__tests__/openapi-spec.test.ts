@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createGateway } from "../gateway.js";
 import {
+	buildExportSpec,
 	buildOpenAPISpec,
 	importOpenAPIRoutes,
 	mergeOpenAPISpec,
@@ -217,6 +218,25 @@ describe("buildOpenAPISpec", () => {
 		expect(paths["/chat"].post["x-x402-price"]).toBe("$0.005");
 		expect(paths["/chat"].post["x-x402-pricing-type"]).toBe("match");
 	});
+
+	test("sets pricing-type to dynamic for function-based pricing", () => {
+		const config = makeConfig({
+			routes: {
+				"POST /generate": {
+					upstream: "api",
+					price: { fn: "computePrice" },
+				},
+			},
+		});
+		const spec = buildOpenAPISpec(config);
+		const paths = spec.paths as Record<
+			string,
+			Record<string, Record<string, unknown>>
+		>;
+
+		expect(paths["/generate"].post["x-x402-pricing-type"]).toBe("dynamic");
+		expect(paths["/generate"].post["x-x402-price"]).toBe("$0.001");
+	});
 });
 
 // ── mergeOpenAPISpec ─────────────────────────────────────────────────────────
@@ -290,6 +310,163 @@ describe("mergeOpenAPISpec", () => {
 		>;
 
 		expect(paths["/pets"].get["x-x402-price"]).toBe("$0.99");
+	});
+
+	test("sets pricing-type on merged operations", () => {
+		const config = makeConfig({
+			routes: {
+				"GET /pets": {
+					upstream: "api",
+					price: { fn: "computePrice" },
+				},
+				"POST /pets": {
+					upstream: "api",
+					match: [{ where: { "body.breed": "poodle" }, price: "$1.00" }],
+					fallback: "$0.50",
+				},
+			},
+		});
+		const merged = mergeOpenAPISpec(PETSTORE_SPEC, config, "api");
+		const paths = merged.paths as Record<
+			string,
+			Record<string, Record<string, unknown>>
+		>;
+
+		expect(paths["/pets"].get["x-x402-pricing-type"]).toBe("dynamic");
+		expect(paths["/pets"].post["x-x402-pricing-type"]).toBe("match");
+	});
+});
+
+// ── buildExportSpec ──────────────────────────────────────────────────────────
+
+const USERS_SPEC = {
+	openapi: "3.0.3",
+	info: { title: "Users API", version: "1.0.0" },
+	paths: {
+		"/users": {
+			get: {
+				summary: "List users",
+				responses: { "200": { description: "OK" } },
+			},
+		},
+		"/users/{userId}": {
+			get: {
+				summary: "Get user by ID",
+				responses: { "200": { description: "OK" } },
+			},
+		},
+	},
+};
+
+describe("buildExportSpec", () => {
+	test("merges specs from multiple upstreams", async () => {
+		const petServer = Bun.serve({
+			port: 0,
+			fetch: () =>
+				new Response(JSON.stringify(PETSTORE_SPEC), {
+					headers: { "Content-Type": "application/json" },
+				}),
+		});
+		const userServer = Bun.serve({
+			port: 0,
+			fetch: () =>
+				new Response(JSON.stringify(USERS_SPEC), {
+					headers: { "Content-Type": "application/json" },
+				}),
+		});
+
+		try {
+			const config = makeConfig({
+				upstreams: {
+					petstore: {
+						url: "http://localhost:9999",
+						openapi: `http://localhost:${petServer.port}/openapi.json`,
+						defaultPrice: "$0.10",
+					},
+					users: {
+						url: "http://localhost:9998",
+						openapi: `http://localhost:${userServer.port}/openapi.json`,
+						defaultPrice: "$0.20",
+					},
+				},
+				routes: {},
+			});
+
+			// Import routes first (like gateway.start does)
+			await importOpenAPIRoutes(config);
+			const spec = await buildExportSpec(config);
+
+			const paths = spec.paths as Record<
+				string,
+				Record<string, Record<string, unknown>>
+			>;
+
+			// Both upstreams' paths should be present
+			expect(paths["/pets"]).toBeDefined();
+			expect(paths["/pets"].get).toBeDefined();
+			expect(paths["/users"]).toBeDefined();
+			expect(paths["/users"].get).toBeDefined();
+			expect(paths["/users/{userId}"]).toBeDefined();
+
+			// First upstream's metadata used as base
+			expect((spec.info as Record<string, string>).title).toBe("Petstore");
+		} finally {
+			petServer.stop();
+			userServer.stop();
+		}
+	});
+
+	test("falls back to buildOpenAPISpec when no upstream specs available", async () => {
+		const config = makeConfig({
+			upstreams: {
+				api: { url: "http://localhost:9999" },
+			},
+		});
+
+		const spec = await buildExportSpec(config);
+
+		expect(spec.openapi).toBe("3.1.0");
+		expect((spec.info as Record<string, string>).title).toBe("Tollbooth API");
+		const paths = spec.paths as Record<string, Record<string, unknown>>;
+		expect(paths["/pets"]).toBeDefined();
+	});
+
+	test("includes config-only routes alongside upstream routes", async () => {
+		const petServer = Bun.serve({
+			port: 0,
+			fetch: () =>
+				new Response(JSON.stringify(PETSTORE_SPEC), {
+					headers: { "Content-Type": "application/json" },
+				}),
+		});
+
+		try {
+			const config = makeConfig({
+				upstreams: {
+					petstore: {
+						url: "http://localhost:9999",
+						openapi: `http://localhost:${petServer.port}/openapi.json`,
+					},
+				},
+				routes: {
+					"GET /health": {
+						upstream: "petstore",
+						price: "$0.00",
+					},
+				},
+			});
+
+			await importOpenAPIRoutes(config);
+			const spec = await buildExportSpec(config);
+
+			const paths = spec.paths as Record<string, Record<string, unknown>>;
+			// Upstream route present
+			expect(paths["/pets"]).toBeDefined();
+			// Config-only route also present
+			expect(paths["/health"]).toBeDefined();
+		} finally {
+			petServer.stop();
+		}
 	});
 });
 

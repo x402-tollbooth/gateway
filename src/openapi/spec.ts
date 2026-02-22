@@ -19,7 +19,9 @@ interface OpenAPIPathItem {
  */
 export async function fetchOpenAPISpec(source: string): Promise<OpenAPISpec> {
 	if (source.startsWith("http://") || source.startsWith("https://")) {
-		const res = await fetch(source);
+		const res = await fetch(source, {
+			signal: AbortSignal.timeout(10_000),
+		});
 		if (!res.ok) {
 			throw new Error(
 				`Failed to fetch OpenAPI spec from ${source}: ${res.status} ${res.statusText}`,
@@ -155,6 +157,8 @@ export function buildOpenAPISpec(config: TollboothConfig): OpenAPISpec {
 			extensions["x-x402-pricing-type"] = "token-based";
 		} else if (route.match) {
 			extensions["x-x402-pricing-type"] = "match";
+		} else if (route.price && typeof route.price === "object" && "fn" in route.price) {
+			extensions["x-x402-pricing-type"] = "dynamic";
 		}
 
 		// Extract path parameters
@@ -323,6 +327,20 @@ export function mergeOpenAPISpec(
 			op["x-x402-price"] = price;
 			op["x-x402-accepts"] = acceptsInfo;
 
+			if (route) {
+				if (route.type === "token-based") {
+					op["x-x402-pricing-type"] = "token-based";
+				} else if (route.match) {
+					op["x-x402-pricing-type"] = "match";
+				} else if (
+					route.price &&
+					typeof route.price === "object" &&
+					"fn" in route.price
+				) {
+					op["x-x402-pricing-type"] = "dynamic";
+				}
+			}
+
 			// Add 402 response if not present
 			const responses = (op.responses ?? {}) as Record<string, unknown>;
 			if (!responses["402"]) {
@@ -348,27 +366,77 @@ export function mergeOpenAPISpec(
 
 /**
  * Build the final OpenAPI spec for the /.well-known/openapi.json endpoint.
- * If an upstream has an OpenAPI spec, merges it. Otherwise builds from config.
+ * Merges all upstream OpenAPI specs and fills gaps with config-generated routes.
  */
 export async function buildExportSpec(
 	config: TollboothConfig,
 ): Promise<OpenAPISpec> {
-	// Find the first upstream with an openapi spec to use as base
+	const mergedSpecs: OpenAPISpec[] = [];
+
 	for (const [name, upstream] of Object.entries(config.upstreams)) {
 		if (!upstream.openapi) continue;
 
 		try {
 			const spec = await fetchOpenAPISpec(upstream.openapi);
-			return mergeOpenAPISpec(spec, config, name);
+			mergedSpecs.push(mergeOpenAPISpec(spec, config, name));
 		} catch {
-			// Fall through to building from config
 			log.warn("openapi_merge_fallback", {
 				upstream: name,
-				reason: "Could not fetch upstream spec, building from config",
+				reason: "Could not fetch upstream spec",
 			});
 		}
 	}
 
-	// No upstream spec available, build from config
-	return buildOpenAPISpec(config);
+	if (mergedSpecs.length === 0) {
+		return buildOpenAPISpec(config);
+	}
+
+	// Use first upstream's spec as base (for info, servers, etc.)
+	const combined = mergedSpecs[0];
+	const combinedPaths = (combined.paths ?? {}) as Record<
+		string,
+		OpenAPIPathItem
+	>;
+
+	// Merge paths from additional upstream specs
+	for (let i = 1; i < mergedSpecs.length; i++) {
+		const paths = mergedSpecs[i].paths as
+			| Record<string, OpenAPIPathItem>
+			| undefined;
+		if (!paths) continue;
+
+		for (const [path, methods] of Object.entries(paths)) {
+			if (!combinedPaths[path]) {
+				combinedPaths[path] = methods;
+			} else {
+				for (const [method, op] of Object.entries(methods)) {
+					if (!(method in combinedPaths[path])) {
+						combinedPaths[path][method] = op;
+					}
+				}
+			}
+		}
+	}
+
+	// Fill in config routes not covered by any upstream spec
+	const configSpec = buildOpenAPISpec(config);
+	const configPaths = configSpec.paths as
+		| Record<string, OpenAPIPathItem>
+		| undefined;
+	if (configPaths) {
+		for (const [path, methods] of Object.entries(configPaths)) {
+			if (!combinedPaths[path]) {
+				combinedPaths[path] = methods;
+			} else {
+				for (const [method, op] of Object.entries(methods)) {
+					if (!(method in combinedPaths[path])) {
+						combinedPaths[path][method] = op;
+					}
+				}
+			}
+		}
+	}
+
+	combined.paths = combinedPaths;
+	return combined;
 }
