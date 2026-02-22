@@ -344,7 +344,11 @@ export function createGateway(
 				);
 
 				const hookResult = await runOnResponse(
-					{ req: tollboothReq, route: resolvedRoute, response: upstreamResponse },
+					{
+						req: tollboothReq,
+						route: resolvedRoute,
+						response: upstreamResponse,
+					},
 					route.hooks,
 					config.hooks,
 				);
