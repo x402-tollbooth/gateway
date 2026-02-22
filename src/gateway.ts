@@ -326,6 +326,43 @@ export function createGateway(
 				});
 			}
 
+			// ── Zero price → skip payment, proxy directly ───────────────────
+			if (price.amount === 0n) {
+				if (
+					!rawBody &&
+					!["GET", "HEAD"].includes(request.method.toUpperCase())
+				) {
+					rawBody = await request.arrayBuffer();
+				}
+
+				const upstreamResponse = await proxyRequest(
+					upstream,
+					upstreamPath,
+					request,
+					rawBody,
+					route.upstream,
+				);
+
+				const hookResult = await runOnResponse(
+					{ req: tollboothReq, route: resolvedRoute, response: upstreamResponse },
+					route.hooks,
+					config.hooks,
+				);
+
+				const finalResponse = isUpstreamResponse(hookResult)
+					? hookResult
+					: upstreamResponse;
+
+				return buildFinalResponse({
+					response: finalResponse,
+					price,
+					request,
+					url,
+					routeKey,
+					start,
+				});
+			}
+
 			const routePricing = getEffectiveRoutePricing(route);
 			const timeDuration =
 				routePricing.model === "time" ? routePricing.duration : undefined;
