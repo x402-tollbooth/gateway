@@ -71,6 +71,40 @@ describe("tollboothConfigSchema", () => {
 		expect(result.defaults.timeout).toBe(60);
 	});
 
+	test("accepts gateway CORS config and applies CORS defaults", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				cors: {
+					allowedOrigins: ["https://app.example.com"],
+				},
+			},
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.gateway.cors).toEqual({
+				allowedOrigins: ["https://app.example.com"],
+				allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
+				allowedHeaders: ["content-type", "payment-signature"],
+				exposedHeaders: ["payment-required", "payment-response"],
+				credentials: false,
+			});
+		}
+	});
+
+	test("rejects wildcard CORS origin when credentials=true", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				cors: {
+					allowedOrigins: ["*"],
+					credentials: true,
+				},
+			},
+		});
+		expect(result.success).toBe(false);
+	});
+
 	test("rejects missing wallets", () => {
 		const { wallets, ...noWallets } = validConfig;
 		const result = tollboothConfigSchema.safeParse(noWallets);

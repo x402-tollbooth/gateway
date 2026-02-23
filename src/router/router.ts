@@ -53,6 +53,29 @@ export function matchRoute(
 	return { matched: false, checked: routeKeys, suggestion };
 }
 
+/**
+ * Return all configured HTTP methods for a concrete request path.
+ * Includes HEAD when GET is configured.
+ */
+export function getMethodsForPath(
+	path: string,
+	config: TollboothConfig,
+): string[] {
+	const methods = new Set<string>();
+
+	for (const routeKey of Object.keys(config.routes)) {
+		const [routeMethod, routePath] = parseRouteKey(routeKey);
+		if (extractParams(routePath, path) !== null) {
+			methods.add(routeMethod);
+			if (routeMethod === "GET") {
+				methods.add("HEAD");
+			}
+		}
+	}
+
+	return [...methods];
+}
+
 function parseRouteKey(key: string): [method: string, path: string] {
 	const spaceIndex = key.indexOf(" ");
 	if (spaceIndex === -1) {
