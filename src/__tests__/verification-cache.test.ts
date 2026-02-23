@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { RedisVerificationCacheStore } from "../verification-cache/redis-store.js";
 import { MemoryVerificationCacheStore } from "../verification-cache/store.js";
+import { MockRedisClient } from "./helpers/mock-redis.js";
 
 // ── MemoryVerificationCacheStore ────────────────────────────────────────────
 
@@ -47,6 +49,35 @@ describe("MemoryVerificationCacheStore", () => {
 		await store.set("key1", { requirementIndex: 2 }, 60_000);
 		const result = await store.get("key1");
 		expect(result).toEqual({ requirementIndex: 2 });
+	});
+});
+
+describe("RedisVerificationCacheStore", () => {
+	let redis: MockRedisClient;
+	let storeA: RedisVerificationCacheStore;
+	let storeB: RedisVerificationCacheStore;
+
+	beforeEach(() => {
+		redis = new MockRedisClient();
+		storeA = new RedisVerificationCacheStore(redis, { prefix: "test:vc" });
+		storeB = new RedisVerificationCacheStore(redis, { prefix: "test:vc" });
+	});
+
+	afterEach(() => {
+		storeA.close();
+		storeB.close();
+	});
+
+	test("shares cache entries across instances", async () => {
+		await storeA.set("key1", { requirementIndex: 3 }, 60_000);
+		const cached = await storeB.get("key1");
+		expect(cached).toEqual({ requirementIndex: 3 });
+	});
+
+	test("expires cache entries after TTL", async () => {
+		await storeA.set("key1", { requirementIndex: 2 }, 10);
+		await Bun.sleep(20);
+		expect(await storeB.get("key1")).toBeUndefined();
 	});
 });
 

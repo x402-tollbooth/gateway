@@ -4,8 +4,10 @@ import {
 	extractIdentity,
 	resolveRateLimit,
 } from "../ratelimit/check.js";
+import { RedisRateLimitStore } from "../ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "../ratelimit/store.js";
 import type { RateLimitConfig, TollboothConfig } from "../types.js";
+import { MockRedisClient } from "./helpers/mock-redis.js";
 
 // ── parseWindow ──────────────────────────────────────────────────────────────
 
@@ -88,6 +90,41 @@ describe("MemoryRateLimitStore", () => {
 		// Wait for window to expire
 		await Bun.sleep(5);
 		const result = await store.check("key1", 1, 1);
+		expect(result.allowed).toBe(true);
+	});
+});
+
+describe("RedisRateLimitStore", () => {
+	let redis: MockRedisClient;
+	let storeA: RedisRateLimitStore;
+	let storeB: RedisRateLimitStore;
+
+	beforeEach(() => {
+		redis = new MockRedisClient();
+		storeA = new RedisRateLimitStore(redis, { prefix: "test:rate" });
+		storeB = new RedisRateLimitStore(redis, { prefix: "test:rate" });
+	});
+
+	afterEach(() => {
+		storeA.close();
+		storeB.close();
+	});
+
+	test("shares limits across store instances", async () => {
+		const r1 = await storeA.check("key1", 1, 1_000);
+		expect(r1.allowed).toBe(true);
+
+		const r2 = await storeB.check("key1", 1, 1_000);
+		expect(r2.allowed).toBe(false);
+		expect(r2.remaining).toBe(0);
+		expect(r2.resetMs).toBeGreaterThan(0);
+	});
+
+	test("expires counters after the window", async () => {
+		await storeA.check("key1", 1, 10);
+		await Bun.sleep(20);
+
+		const result = await storeB.check("key1", 1, 10);
 		expect(result.allowed).toBe(true);
 	});
 });

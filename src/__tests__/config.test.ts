@@ -71,6 +71,36 @@ describe("tollboothConfigSchema", () => {
 		expect(result.defaults.timeout).toBe(60);
 	});
 
+	test("accepts redis store configuration", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			stores: {
+				redis: {
+					url: "redis://localhost:6379",
+					prefix: "tollbooth",
+					options: {
+						connectionTimeout: 5000,
+						autoReconnect: true,
+					},
+				},
+				rateLimit: { backend: "redis" },
+				verificationCache: { backend: "redis" },
+				timeSession: { backend: "redis" },
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects redis store backend without a redis url", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			stores: {
+				rateLimit: { backend: "redis" },
+			},
+		});
+		expect(result.success).toBe(false);
+	});
+
 	test("rejects missing wallets", () => {
 		const { wallets, ...noWallets } = validConfig;
 		const result = tollboothConfigSchema.safeParse(noWallets);

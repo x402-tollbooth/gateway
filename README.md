@@ -82,6 +82,7 @@ docker run -p 3000:3000 \
 
 | Platform                       | Guide                                  | Notes                                      |
 | ------------------------------ | -------------------------------------- | ------------------------------------------ |
+| Redis shared stores            | [Setup guide](docs/deploy/redis.md)    | Multi-instance consistency + restart-safe  |
 | [Fly.io](https://fly.io)       | [Deploy guide](docs/deploy/fly-io.md)  | `fly.toml` template, scale-to-zero support |
 | [Railway](https://railway.com) | [Deploy guide](docs/deploy/railway.md) | Docker-based, auto-deploy from GitHub      |
 
@@ -476,6 +477,68 @@ routes:
 ```
 
 Supported durations: `s`, `m`, `h`, `d` (for example `30m`, `1h`, `24h`).
+
+## Shared Stores (Redis)
+
+By default, tollbooth keeps rate limits, time sessions, and verification cache in memory.
+
+- `memory` is fine for a single instance.
+- `redis` is recommended for multi-instance or restart-safe deployments.
+
+Use the `stores` block to enable Redis per store:
+
+```yaml
+stores:
+  redis:
+    url: "redis://localhost:6379"
+    prefix: "tollbooth-prod"
+    options:
+      connectionTimeout: 5000
+      autoReconnect: true
+
+  rateLimit:
+    backend: redis
+
+  verificationCache:
+    backend: redis
+
+  timeSession:
+    backend: redis
+```
+
+You can override Redis connection details for one store:
+
+```yaml
+stores:
+  redis:
+    url: "redis://shared-cache:6379"
+    prefix: "tollbooth"
+
+  verificationCache:
+    backend: redis
+    redis:
+      url: "redis://verification-cache:6379"
+      prefix: "tollbooth-vc"
+```
+
+### docker-compose example
+
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  tollbooth:
+    image: ghcr.io/loa212/x402-tollbooth:latest
+    depends_on:
+      - redis
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./tollbooth.config.yaml:/app/tollbooth.config.yaml:ro
+```
 
 ## Multiple Upstreams
 

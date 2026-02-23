@@ -101,6 +101,57 @@ const settlementStrategySchema = z
 		"Custom settlement strategy requires a 'module' path",
 	);
 
+const redisUrlSchema = z
+	.string()
+	.url()
+	.refine(
+		(value) => value.startsWith("redis://") || value.startsWith("rediss://"),
+		'Must be a Redis URL like "redis://localhost:6379"',
+	);
+
+const redisStoreOptionsSchema = z
+	.object({
+		connectionTimeout: z.number().int().positive().optional(),
+		idleTimeout: z.number().int().nonnegative().optional(),
+		autoReconnect: z.boolean().optional(),
+		maxRetries: z.number().int().positive().optional(),
+		enableOfflineQueue: z.boolean().optional(),
+		enableAutoPipelining: z.boolean().optional(),
+	})
+	.strict();
+
+const redisConnectionSchema = z
+	.object({
+		url: redisUrlSchema,
+		prefix: z.string().min(1).optional(),
+		options: redisStoreOptionsSchema.optional(),
+	})
+	.strict();
+
+const redisConnectionOverrideSchema = z
+	.object({
+		url: redisUrlSchema.optional(),
+		prefix: z.string().min(1).optional(),
+		options: redisStoreOptionsSchema.optional(),
+	})
+	.strict();
+
+const storeSelectionSchema = z
+	.object({
+		backend: z.enum(["memory", "redis"]).optional(),
+		redis: redisConnectionOverrideSchema.optional(),
+	})
+	.strict();
+
+const storesSchema = z
+	.object({
+		redis: redisConnectionSchema.optional(),
+		rateLimit: storeSelectionSchema.optional(),
+		verificationCache: storeSelectionSchema.optional(),
+		timeSession: storeSelectionSchema.optional(),
+	})
+	.strict();
+
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
@@ -149,37 +200,59 @@ const upstreamConfigSchema = z.object({
 		.optional(),
 });
 
-export const tollboothConfigSchema = z.object({
-	gateway: z
-		.object({
-			port: z.number().int().positive().default(3000),
-			discovery: z.boolean().default(true),
-			hostname: z.string().optional(),
-		})
-		.default({}),
+export const tollboothConfigSchema = z
+	.object({
+		gateway: z
+			.object({
+				port: z.number().int().positive().default(3000),
+				discovery: z.boolean().default(true),
+				hostname: z.string().optional(),
+			})
+			.default({}),
 
-	wallets: z.record(z.string().min(1)),
+		wallets: z.record(z.string().min(1)),
 
-	accepts: z.array(acceptedPaymentSchema).min(1),
+		accepts: z.array(acceptedPaymentSchema).min(1),
 
-	defaults: z
-		.object({
-			price: z.string().default("$0.001"),
-			timeout: z.number().positive().default(60),
-			rateLimit: rateLimitSchema.optional(),
-			verificationCache: verificationCacheSchema.optional(),
-		})
-		.default({}),
+		defaults: z
+			.object({
+				price: z.string().default("$0.001"),
+				timeout: z.number().positive().default(60),
+				rateLimit: rateLimitSchema.optional(),
+				verificationCache: verificationCacheSchema.optional(),
+			})
+			.default({}),
 
-	upstreams: z.record(upstreamConfigSchema),
+		stores: storesSchema.optional(),
 
-	routes: z.record(routeConfigSchema),
+		upstreams: z.record(upstreamConfigSchema),
 
-	hooks: routeHooksSchema,
+		routes: z.record(routeConfigSchema),
 
-	facilitator: facilitatorSchema.optional(),
+		hooks: routeHooksSchema,
 
-	settlement: settlementStrategySchema.optional(),
-});
+		facilitator: facilitatorSchema.optional(),
+
+		settlement: settlementStrategySchema.optional(),
+	})
+	.superRefine((config, ctx) => {
+		const globalRedis = config.stores?.redis?.url;
+		const storeNames = [
+			"rateLimit",
+			"verificationCache",
+			"timeSession",
+		] as const;
+		for (const storeName of storeNames) {
+			const storeConfig = config.stores?.[storeName];
+			if (storeConfig?.backend !== "redis") continue;
+			const storeUrl = storeConfig.redis?.url ?? globalRedis;
+			if (storeUrl) continue;
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["stores", storeName, "redis", "url"],
+				message: `Required when stores.${storeName}.backend is "redis"`,
+			});
+		}
+	});
 
 export type TollboothConfigInput = z.input<typeof tollboothConfigSchema>;
