@@ -8,6 +8,7 @@ import {
 	runOnSettled,
 } from "./hooks/runner.js";
 import { log } from "./logger.js";
+import { resolveClientIp } from "./network/client-ip.js";
 import { extractModel, resolveOpenAIPrice } from "./openai/handler.js";
 import { buildExportSpec, importOpenAPIRoutes } from "./openapi/spec.js";
 import { getEffectiveRoutePricing } from "./pricing/config.js";
@@ -23,7 +24,7 @@ import {
 import { RedisRateLimitStore } from "./ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
-import { matchRoute } from "./router/router.js";
+import { getMethodsForPath, matchRoute } from "./router/router.js";
 import { RedisTimeSessionStore } from "./session/redis-store.js";
 import {
 	buildSessionKey,
@@ -40,6 +41,7 @@ import {
 	resolveRedisStoreConfig,
 } from "./store/resolve.js";
 import type {
+	CorsConfig,
 	PaymentRequirementsPayload,
 	PayToSplit,
 	RateLimitStore,
@@ -75,6 +77,7 @@ import { extractPayerFromPaymentHeader } from "./x402/payer.js";
 
 interface AfterResponseCtx {
 	request: Request;
+	clientIp?: string;
 	tollboothReq: TollboothRequest;
 	route: RouteConfig;
 	routeKey: string;
@@ -102,6 +105,7 @@ interface FinalResponseCtx {
 	settlementSkippedReason?: string;
 	price: { amount: bigint; asset: string };
 	request: Request;
+	clientIp?: string;
 	url: URL;
 	routeKey: string;
 	start: number;
@@ -109,6 +113,7 @@ interface FinalResponseCtx {
 
 interface ErrorCtx {
 	request: Request;
+	clientIp?: string;
 	tollboothReq: TollboothRequest;
 	url: URL;
 	routeKey: string;
@@ -118,6 +123,19 @@ interface ErrorCtx {
 	query: Record<string, string>;
 	resolvedRoute?: ResolvedRoute;
 	start: number;
+}
+
+interface NormalizedCorsConfig {
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedMethodsSet: Set<string>;
+	allowedHeaders: string[];
+	allowedHeadersSet: Set<string>;
+	exposedHeaders: string[];
+	credentials: boolean;
+	maxAge?: number;
+	allowAnyOrigin: boolean;
+	allowAnyHeader: boolean;
 }
 
 /**
@@ -139,6 +157,7 @@ export function createGateway(
 		createVerificationCacheStoreFromConfig(config);
 	const timeSessionStore =
 		options?.timeSessionStore ?? createTimeSessionStoreFromConfig(config);
+	const trustProxy = config.gateway.trustProxy ?? false;
 
 	const discoveryPayload = config.gateway.discovery
 		? JSON.stringify(generateDiscoveryMetadata(config))
@@ -149,10 +168,181 @@ export function createGateway(
 
 	// Cached OpenAPI export spec (built during start())
 	let openapiPayload: string | null = null;
+	const corsConfig = normalizeCorsConfig(config.gateway.cors);
 
-	async function handleRequest(request: Request): Promise<Response> {
+	function getEndpointMethods(pathname: string): string[] {
+		const methods = new Set<string>();
+
+		if (pathname === "/health") {
+			methods.add("GET");
+			methods.add("HEAD");
+		}
+		if (discoveryPayload && pathname === "/.well-known/x402") {
+			methods.add("GET");
+			methods.add("HEAD");
+		}
+		if (openapiPayload && pathname === "/.well-known/openapi.json") {
+			methods.add("GET");
+			methods.add("HEAD");
+		}
+		for (const method of getMethodsForPath(pathname, config)) {
+			methods.add(method);
+		}
+
+		return [...methods];
+	}
+
+	function baseCorsHeaders(origin: string): Headers {
+		const cors = corsConfig;
+		const headers = new Headers();
+		if (!cors) {
+			return headers;
+		}
+
+		const allowOrigin = cors.allowAnyOrigin && !cors.credentials ? "*" : origin;
+		headers.set("Access-Control-Allow-Origin", allowOrigin);
+		appendVary(headers, "Origin");
+
+		if (cors.credentials) {
+			headers.set("Access-Control-Allow-Credentials", "true");
+		}
+
+		return headers;
+	}
+
+	function handleCorsPreflight(
+		request: Request,
+		pathname: string,
+	): Response | null {
+		const cors = corsConfig;
+		if (!cors || request.method.toUpperCase() !== "OPTIONS") {
+			return null;
+		}
+
+		const origin = request.headers.get("origin");
+		const requestedMethod = request.headers.get(
+			"access-control-request-method",
+		);
+		if (!origin || !requestedMethod) {
+			return null;
+		}
+
+		const endpointMethods = getEndpointMethods(pathname);
+		if (endpointMethods.length === 0) {
+			return new Response("Not Found", { status: 404 });
+		}
+
+		if (!isOriginAllowed(origin, cors)) {
+			return new Response("CORS origin not allowed", { status: 403 });
+		}
+
+		const allowedMethods = endpointMethods.filter((method) =>
+			cors.allowedMethodsSet.has(method),
+		);
+		const upperRequestedMethod = requestedMethod.toUpperCase();
+		if (
+			allowedMethods.length === 0 ||
+			!allowedMethods.includes(upperRequestedMethod)
+		) {
+			const headers = baseCorsHeaders(origin);
+			if (allowedMethods.length > 0) {
+				headers.set("Access-Control-Allow-Methods", allowedMethods.join(", "));
+			}
+			return new Response("CORS method not allowed", {
+				status: 403,
+				headers,
+			});
+		}
+
+		const requestedHeaders = parseHeaderList(
+			request.headers.get("access-control-request-headers"),
+			(v) => v.toLowerCase(),
+		);
+		if (
+			!cors.allowAnyHeader &&
+			requestedHeaders.some((header) => !cors.allowedHeadersSet.has(header))
+		) {
+			const headers = baseCorsHeaders(origin);
+			headers.set("Access-Control-Allow-Methods", allowedMethods.join(", "));
+			if (cors.allowedHeaders.length > 0) {
+				headers.set(
+					"Access-Control-Allow-Headers",
+					cors.allowedHeaders.join(", "),
+				);
+			}
+			return new Response("CORS headers not allowed", {
+				status: 403,
+				headers,
+			});
+		}
+
+		const headers = baseCorsHeaders(origin);
+		appendVary(headers, "Access-Control-Request-Method");
+		appendVary(headers, "Access-Control-Request-Headers");
+		headers.set("Access-Control-Allow-Methods", allowedMethods.join(", "));
+		if (cors.allowAnyHeader) {
+			headers.set("Access-Control-Allow-Headers", "*");
+		} else if (cors.allowedHeaders.length > 0) {
+			headers.set(
+				"Access-Control-Allow-Headers",
+				cors.allowedHeaders.join(", "),
+			);
+		}
+		if (cors.maxAge !== undefined) {
+			headers.set("Access-Control-Max-Age", String(cors.maxAge));
+		}
+
+		return new Response(null, { status: 204, headers });
+	}
+
+	function applyCorsHeaders(
+		response: Response,
+		request: Request,
+		pathname: string,
+	): Response {
+		const cors = corsConfig;
+		if (!cors) {
+			return response;
+		}
+
+		const origin = request.headers.get("origin");
+		if (!origin || !isOriginAllowed(origin, cors)) {
+			return response;
+		}
+
+		if (getEndpointMethods(pathname).length === 0) {
+			return response;
+		}
+
+		const headers = new Headers(response.headers);
+		const allowOrigin = cors.allowAnyOrigin && !cors.credentials ? "*" : origin;
+		headers.set("Access-Control-Allow-Origin", allowOrigin);
+		appendVary(headers, "Origin");
+
+		if (cors.credentials) {
+			headers.set("Access-Control-Allow-Credentials", "true");
+		}
+		if (cors.exposedHeaders.length > 0) {
+			headers.set(
+				"Access-Control-Expose-Headers",
+				cors.exposedHeaders.join(", "),
+			);
+		}
+
+		return new Response(response.body, {
+			status: response.status,
+			statusText: response.statusText,
+			headers,
+		});
+	}
+
+	async function handleRequest(
+		request: Request,
+		remoteIp?: string,
+	): Promise<Response> {
 		const start = performance.now();
 		const url = new URL(request.url);
+		const clientIp = resolveClientIp(request, { remoteIp, trustProxy });
 
 		// Discovery endpoint
 		if (discoveryPayload && url.pathname === "/.well-known/x402") {
@@ -190,6 +380,7 @@ export function createGateway(
 				method: request.method,
 				path: url.pathname,
 				status: 404,
+				client_ip: clientIp ?? "unknown",
 			});
 			return new Response(JSON.stringify(detail), {
 				status: 404,
@@ -229,6 +420,7 @@ export function createGateway(
 			headers,
 			query,
 			body: parsedBody,
+			clientIp,
 			params,
 		};
 
@@ -237,7 +429,7 @@ export function createGateway(
 
 		try {
 			// ── Identity (shared by rate limiting + verification cache) ──────
-			const identity = extractIdentity(request);
+			const identity = extractIdentity(request, { clientIp });
 
 			// ── Rate limiting ────────────────────────────────────────────────
 			const rateLimit = resolveRateLimit(route.rateLimit, config);
@@ -255,6 +447,7 @@ export function createGateway(
 						path: url.pathname,
 						route: routeKey,
 						identity,
+						client_ip: clientIp ?? "unknown",
 						limit: rlResult.limit,
 						retry_after_s: retryAfter,
 					});
@@ -382,6 +575,7 @@ export function createGateway(
 					response: finalResponse,
 					price,
 					request,
+					clientIp,
 					url,
 					routeKey,
 					start,
@@ -481,6 +675,7 @@ export function createGateway(
 							response: finalResponse,
 							price,
 							request,
+							clientIp,
 							url,
 							routeKey,
 							start,
@@ -522,6 +717,7 @@ export function createGateway(
 			if (settlementTiming === "after-response") {
 				return await handleAfterResponse({
 					request,
+					clientIp,
 					tollboothReq,
 					resolvedRoute: resolvedRoute as ResolvedRoute,
 					upstream,
@@ -607,6 +803,7 @@ export function createGateway(
 				settlement,
 				price,
 				request,
+				clientIp,
 				url,
 				routeKey,
 				start,
@@ -614,6 +811,7 @@ export function createGateway(
 		} catch (error) {
 			return handleError(error, {
 				request,
+				clientIp,
 				tollboothReq,
 				url,
 				routeKey,
@@ -634,6 +832,7 @@ export function createGateway(
 	async function handleAfterResponse(ctx: AfterResponseCtx): Promise<Response> {
 		const {
 			request,
+			clientIp,
 			tollboothReq,
 			resolvedRoute,
 			upstream,
@@ -692,6 +891,7 @@ export function createGateway(
 					method: request.method,
 					path: url.pathname,
 					route: routeKey,
+					client_ip: clientIp ?? "unknown",
 					upstream: error.upstreamUrl,
 					error: error.message,
 					duration_ms: Math.round(performance.now() - start),
@@ -776,6 +976,7 @@ export function createGateway(
 				settlement,
 				price,
 				request,
+				clientIp,
 				url,
 				routeKey,
 				start,
@@ -811,6 +1012,7 @@ export function createGateway(
 			settlementSkippedReason: reason,
 			price,
 			request,
+			clientIp,
 			url,
 			routeKey,
 			start,
@@ -836,6 +1038,7 @@ export function createGateway(
 			settlementSkippedReason,
 			price,
 			request,
+			clientIp,
 			url,
 			routeKey,
 			start,
@@ -869,6 +1072,7 @@ export function createGateway(
 			method: request.method,
 			path: url.pathname,
 			route: routeKey,
+			client_ip: clientIp ?? "unknown",
 			price: formatPrice(price.amount, price.asset),
 			duration_ms,
 			status: finalResponse.status,
@@ -887,6 +1091,7 @@ export function createGateway(
 	function handleError(error: unknown, ctx: ErrorCtx): Response {
 		const {
 			request,
+			clientIp,
 			tollboothReq,
 			url,
 			routeKey,
@@ -902,6 +1107,7 @@ export function createGateway(
 				method: request.method,
 				path: url.pathname,
 				route: routeKey,
+				client_ip: clientIp ?? "unknown",
 				status: error.statusCode,
 				error: error.message,
 				duration_ms: Math.round(performance.now() - start),
@@ -917,6 +1123,7 @@ export function createGateway(
 				method: request.method,
 				path: url.pathname,
 				route: routeKey,
+				client_ip: clientIp ?? "unknown",
 				upstream: error.upstreamUrl,
 				error: error.message,
 				duration_ms: Math.round(performance.now() - start),
@@ -947,6 +1154,7 @@ export function createGateway(
 			method: request.method,
 			path: url.pathname,
 			route: routeKey,
+			client_ip: clientIp ?? "unknown",
 			error: errMsg,
 			duration_ms: Math.round(performance.now() - start),
 		});
@@ -1000,7 +1208,17 @@ export function createGateway(
 			server = Bun.serve({
 				port: config.gateway.port,
 				hostname: config.gateway.hostname,
-				fetch: handleRequest,
+				fetch: async (request, bunServer) => {
+					const pathname = new URL(request.url).pathname;
+					const preflightResponse = handleCorsPreflight(request, pathname);
+					if (preflightResponse) {
+						return preflightResponse;
+					}
+
+					const remoteIp = bunServer.requestIP(request)?.address;
+					const response = await handleRequest(request, remoteIp);
+					return applyCorsHeaders(response, request, pathname);
+				},
 			});
 			if (!options?.silent) {
 				log.info("started", {
@@ -1164,4 +1382,71 @@ function resolveVerificationCache(
 	config: TollboothConfig,
 ): VerificationCacheConfig | undefined {
 	return routeCache ?? config.defaults.verificationCache;
+}
+
+function normalizeCorsConfig(
+	config: CorsConfig | undefined,
+): NormalizedCorsConfig | undefined {
+	if (!config) {
+		return undefined;
+	}
+
+	const allowedMethods = unique(
+		config.allowedMethods.map((method) => method.toUpperCase()),
+	);
+	const allowedHeaders = unique(
+		config.allowedHeaders.map((h) => h.toLowerCase()),
+	);
+	const exposedHeaders = unique(config.exposedHeaders);
+
+	return {
+		allowedOrigins: unique(config.allowedOrigins),
+		allowedMethods,
+		allowedMethodsSet: new Set(allowedMethods),
+		allowedHeaders,
+		allowedHeadersSet: new Set(allowedHeaders),
+		exposedHeaders,
+		credentials: config.credentials,
+		maxAge: config.maxAge,
+		allowAnyOrigin: config.allowedOrigins.includes("*"),
+		allowAnyHeader: config.allowedHeaders.includes("*"),
+	};
+}
+
+function isOriginAllowed(origin: string, cors: NormalizedCorsConfig): boolean {
+	return cors.allowAnyOrigin || cors.allowedOrigins.includes(origin);
+}
+
+function parseHeaderList(
+	value: string | null,
+	normalize: (value: string) => string = (v) => v,
+): string[] {
+	if (!value) {
+		return [];
+	}
+	return value
+		.split(",")
+		.map((part) => normalize(part.trim()))
+		.filter((part) => part.length > 0);
+}
+
+function appendVary(headers: Headers, value: string): void {
+	const current = headers.get("Vary");
+	if (!current) {
+		headers.set("Vary", value);
+		return;
+	}
+
+	const existing = current
+		.split(",")
+		.map((part) => part.trim().toLowerCase())
+		.filter(Boolean);
+	if (existing.includes(value.toLowerCase())) {
+		return;
+	}
+	headers.set("Vary", `${current}, ${value}`);
+}
+
+function unique(values: string[]): string[] {
+	return [...new Set(values)];
 }

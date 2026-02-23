@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { extractParams, rewritePath } from "../router/rewriter.js";
-import { matchRoute } from "../router/router.js";
+import { getMethodsForPath, matchRoute } from "../router/router.js";
 import type { TollboothConfig } from "../types.js";
 
 describe("extractParams", () => {
@@ -122,5 +122,17 @@ describe("matchRoute", () => {
 		if (!result.matched) {
 			expect(result.suggestion).toBeUndefined();
 		}
+	});
+
+	test("returns configured methods for a matching path", () => {
+		const methods = getMethodsForPath("/ai/claude", config);
+		expect(methods).toContain("POST");
+		expect(methods).not.toContain("GET");
+	});
+
+	test("includes HEAD when GET route matches the path", () => {
+		const methods = getMethodsForPath("/data/dune/12345", config);
+		expect(methods).toContain("GET");
+		expect(methods).toContain("HEAD");
 	});
 });

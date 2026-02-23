@@ -152,11 +152,30 @@ describe("extractIdentity", () => {
 		expect(extractIdentity(req)).toBe("payer:0xdef456");
 	});
 
-	test("falls back to x-forwarded-for when no payment header", () => {
+	test("uses remote client ip by default", () => {
+		const req = new Request("http://localhost/test");
+		expect(extractIdentity(req, { remoteIp: "198.51.100.10" })).toBe(
+			"ip:198.51.100.10",
+		);
+	});
+
+	test("does not trust forwarded headers by default", () => {
 		const req = new Request("http://localhost/test", {
 			headers: { "x-forwarded-for": "203.0.113.50, 70.41.3.18" },
 		});
-		expect(extractIdentity(req)).toBe("ip:203.0.113.50");
+		expect(extractIdentity(req, { remoteIp: "10.0.0.5" })).toBe("ip:10.0.0.5");
+	});
+
+	test("uses forwarded headers when trustProxy is enabled", () => {
+		const req = new Request("http://localhost/test", {
+			headers: { "x-forwarded-for": "203.0.113.50, 70.41.3.18" },
+		});
+		expect(
+			extractIdentity(req, {
+				remoteIp: "10.0.0.5",
+				trustProxy: true,
+			}),
+		).toBe("ip:203.0.113.50");
 	});
 
 	test("returns ip:unknown when no identity available", () => {
@@ -171,7 +190,12 @@ describe("extractIdentity", () => {
 				"x-forwarded-for": "1.2.3.4",
 			},
 		});
-		expect(extractIdentity(req)).toBe("ip:1.2.3.4");
+		expect(
+			extractIdentity(req, {
+				remoteIp: "10.0.0.5",
+				trustProxy: true,
+			}),
+		).toBe("ip:1.2.3.4");
 	});
 });
 

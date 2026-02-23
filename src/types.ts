@@ -22,6 +22,24 @@ export interface GatewayConfig {
 	port: number;
 	discovery: boolean;
 	hostname?: string;
+	trustProxy?: TrustProxyConfig;
+	cors?: CorsConfig;
+}
+
+export type TrustProxyConfig = boolean | number | TrustProxyOptions;
+
+export interface TrustProxyOptions {
+	hops?: number;
+	cidrs?: string[];
+}
+
+export interface CorsConfig {
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedHeaders: string[];
+	exposedHeaders: string[];
+	credentials: boolean;
+	maxAge?: number;
 }
 
 export type StoreBackend = "memory" | "redis";
@@ -221,6 +239,7 @@ export interface TollboothRequest {
 	query: Record<string, string>;
 	body?: unknown;
 	payer?: string;
+	clientIp?: string;
 	params: Record<string, string>;
 }
 

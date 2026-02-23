@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidIpOrCidr } from "../network/client-ip.js";
 
 const durationSchema = z
 	.string()
@@ -152,6 +153,59 @@ const storesSchema = z
 	})
 	.strict();
 
+const trustProxySchema = z.union([
+	z.boolean(),
+	z.number().int().positive(),
+	z
+		.object({
+			hops: z.number().int().positive().optional(),
+			cidrs: z
+				.array(
+					z
+						.string()
+						.min(1)
+						.refine(
+							(value) => isValidIpOrCidr(value),
+							'Must be a valid IP or CIDR (e.g. "203.0.113.0/24")',
+						),
+				)
+				.min(1)
+				.optional(),
+		})
+		.strict()
+		.refine(
+			(value) => value.hops != null || value.cidrs != null,
+			'Must include "hops" and/or "cidrs"',
+		),
+]);
+
+const corsSchema = z
+	.object({
+		allowedOrigins: z.array(z.string().min(1)).min(1),
+		allowedMethods: z
+			.array(z.string().min(1))
+			.min(1)
+			.default(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
+		allowedHeaders: z
+			.array(z.string().min(1))
+			.default(["content-type", "payment-signature"]),
+		exposedHeaders: z
+			.array(z.string().min(1))
+			.default(["payment-required", "payment-response"]),
+		credentials: z.boolean().default(false),
+		maxAge: z.number().int().nonnegative().optional(),
+	})
+	.strict()
+	.superRefine((cors, ctx) => {
+		if (cors.credentials && cors.allowedOrigins.includes("*")) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["allowedOrigins"],
+				message: 'Wildcard "*" origin is not allowed when credentials=true',
+			});
+		}
+	});
+
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
@@ -207,6 +261,8 @@ export const tollboothConfigSchema = z
 				port: z.number().int().positive().default(3000),
 				discovery: z.boolean().default(true),
 				hostname: z.string().optional(),
+				trustProxy: trustProxySchema.default(false),
+				cors: corsSchema.optional(),
 			})
 			.default({}),
 
