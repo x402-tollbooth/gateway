@@ -22,8 +22,14 @@ export interface GatewayConfig {
 	port: number;
 	discovery: boolean;
 	hostname?: string;
+	metrics?: MetricsConfig;
 	trustProxy?: TrustProxyConfig;
 	cors?: CorsConfig;
+}
+
+export interface MetricsConfig {
+	enabled: boolean;
+	path: string;
 }
 
 export type TrustProxyConfig = boolean | number | TrustProxyOptions;

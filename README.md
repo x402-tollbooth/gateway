@@ -285,6 +285,41 @@ The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed p
 - **Custom facilitator** — point to a self-hosted or alternative facilitator
 - **Pluggable settlement** — swap the default facilitator for a custom settlement backend
 
+## Prometheus Metrics
+
+Enable an optional Prometheus endpoint:
+
+```yaml
+gateway:
+  metrics:
+    enabled: true
+    path: /metrics # default
+```
+
+When enabled, tollbooth exposes counters and histograms such as:
+
+- `tollbooth_requests_total{route,method,status}`
+- `tollbooth_payments_total{route,outcome}`
+- `tollbooth_settlements_total{strategy,outcome}`
+- `tollbooth_request_duration_seconds{route,method}`
+
+Basic Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: tollbooth
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["localhost:3000"]
+```
+
+Example queries:
+
+- p95 latency per route:
+  `histogram_quantile(0.95, sum by (le, route, method) (rate(tollbooth_request_duration_seconds_bucket[5m])))`
+- 402 rate:
+  `sum(rate(tollbooth_requests_total{status="402"}[5m])) / sum(rate(tollbooth_requests_total[5m]))`
+
 ## Proxy Deployments (`trustProxy`)
 
 By default, tollbooth **does not trust forwarded headers**. This is the safe default.

@@ -8,6 +8,11 @@ import {
 	runOnSettled,
 } from "./hooks/runner.js";
 import { log } from "./logger.js";
+import {
+	PROMETHEUS_CONTENT_TYPE,
+	type SettlementStrategyLabel,
+	TollboothPrometheusMetrics,
+} from "./metrics/prometheus.js";
 import { resolveClientIp } from "./network/client-ip.js";
 import { extractModel, resolveOpenAIPrice } from "./openai/handler.js";
 import { buildExportSpec, importOpenAPIRoutes } from "./openapi/spec.js";
@@ -125,6 +130,14 @@ interface ErrorCtx {
 	start: number;
 }
 
+const RESERVED_ROUTE_LABELS = {
+	discovery: "__discovery__",
+	health: "__health__",
+	metrics: "__metrics__",
+	openapi: "__openapi__",
+	unmatched: "__unmatched__",
+} as const;
+
 interface NormalizedCorsConfig {
 	allowedOrigins: string[];
 	allowedMethods: string[];
@@ -168,6 +181,14 @@ export function createGateway(
 
 	// Cached OpenAPI export spec (built during start())
 	let openapiPayload: string | null = null;
+	const metricsConfig = config.gateway.metrics ?? {
+		enabled: false,
+		path: "/metrics",
+	};
+	const metrics = metricsConfig.enabled
+		? new TollboothPrometheusMetrics()
+		: null;
+	const metricsPath = metricsConfig.path;
 	const corsConfig = normalizeCorsConfig(config.gateway.cors);
 
 	function getEndpointMethods(pathname: string): string[] {
@@ -343,335 +364,300 @@ export function createGateway(
 		const start = performance.now();
 		const url = new URL(request.url);
 		const clientIp = resolveClientIp(request, { remoteIp, trustProxy });
-
-		// Discovery endpoint
-		if (discoveryPayload && url.pathname === "/.well-known/x402") {
-			return new Response(discoveryPayload, {
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-
-		// Health check
-		if (url.pathname === "/health") {
-			return new Response(JSON.stringify({ status: "ok" }), {
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-
-		// OpenAPI spec export
-		if (openapiPayload && url.pathname === "/.well-known/openapi.json") {
-			return new Response(openapiPayload, {
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-
-		// Match route
-		const result = matchRoute(request.method, url.pathname, config);
-		if (!result.matched) {
-			const requested = `${request.method.toUpperCase()} ${url.pathname}`;
-			const detail: Record<string, unknown> = {
-				error: `Route not found: ${requested}`,
-				checked: result.checked,
-			};
-			if (result.suggestion) {
-				detail.suggestion = `Did you mean ${result.suggestion}?`;
+		const method = request.method.toUpperCase();
+		const finish = (routeLabel: string, response: Response): Response => {
+			if (metrics) {
+				metrics.incRequest(routeLabel, method, response.status);
+				metrics.observeRequestDuration(
+					routeLabel,
+					method,
+					(performance.now() - start) / 1000,
+				);
 			}
-			log.warn("route_not_found", {
-				method: request.method,
-				path: url.pathname,
-				status: 404,
-				client_ip: clientIp ?? "unknown",
-			});
-			return new Response(JSON.stringify(detail), {
-				status: 404,
-				headers: { "Content-Type": "application/json" },
-			});
-		}
-
-		const { routeKey, route, upstream, params } = result;
-
-		// Parse query
-		const query: Record<string, string> = {};
-		for (const [key, value] of url.searchParams.entries()) {
-			query[key] = value;
-		}
-
-		// Parse headers
-		const headers: Record<string, string> = {};
-		for (const [key, value] of request.headers.entries()) {
-			headers[key] = value;
-		}
-
-		// Buffer body if needed for matching
-		let parsedBody: unknown;
-		let rawBody: ArrayBuffer | undefined;
-		const needsBody = routeNeedsBody(route);
-
-		if (needsBody) {
-			const buffered = await bufferRequestBody(request);
-			parsedBody = buffered.parsed;
-			rawBody = buffered.raw;
-		}
-
-		// Build TollboothRequest
-		const tollboothReq: TollboothRequest = {
-			method: request.method,
-			path: url.pathname,
-			headers,
-			query,
-			body: parsedBody,
-			clientIp,
-			params,
+			return response;
+		};
+		let paymentOutcomeRecorded = false;
+		let matchedRouteKey: string | null = null;
+		const recordPaymentOutcome = (
+			outcome: "success" | "rejected" | "missing",
+		) => {
+			if (!matchedRouteKey || paymentOutcomeRecorded) return;
+			metrics?.incPayment(matchedRouteKey, outcome);
+			paymentOutcomeRecorded = true;
 		};
 
-		let resolvedRoute: ResolvedRoute | undefined;
-		const settlementTiming = route.settlement ?? "before-response";
+		metrics?.incActiveRequests();
 
 		try {
-			// ── Identity (shared by rate limiting + verification cache) ──────
-			const identity = extractIdentity(request, { clientIp });
-
-			// ── Rate limiting ────────────────────────────────────────────────
-			const rateLimit = resolveRateLimit(route.rateLimit, config);
-			if (rateLimit) {
-				const rlResult = await checkRateLimit(
-					rateLimitStore,
-					identity,
-					routeKey,
-					rateLimit,
+			// Discovery endpoint
+			if (discoveryPayload && url.pathname === "/.well-known/x402") {
+				return finish(
+					RESERVED_ROUTE_LABELS.discovery,
+					new Response(discoveryPayload, {
+						headers: { "Content-Type": "application/json" },
+					}),
 				);
-				if (!rlResult.allowed) {
-					const retryAfter = Math.ceil(rlResult.resetMs / 1000);
-					log.warn("rate_limited", {
-						method: request.method,
-						path: url.pathname,
-						route: routeKey,
+			}
+
+			// Health check
+			if (url.pathname === "/health") {
+				return finish(
+					RESERVED_ROUTE_LABELS.health,
+					new Response(JSON.stringify({ status: "ok" }), {
+						headers: { "Content-Type": "application/json" },
+					}),
+				);
+			}
+
+			// Metrics endpoint
+			if (metrics && url.pathname === metricsPath) {
+				return finish(
+					RESERVED_ROUTE_LABELS.metrics,
+					new Response(metrics.render(), {
+						headers: { "Content-Type": PROMETHEUS_CONTENT_TYPE },
+					}),
+				);
+			}
+
+			// OpenAPI spec export
+			if (openapiPayload && url.pathname === "/.well-known/openapi.json") {
+				return finish(
+					RESERVED_ROUTE_LABELS.openapi,
+					new Response(openapiPayload, {
+						headers: { "Content-Type": "application/json" },
+					}),
+				);
+			}
+
+			// Match route
+			const result = matchRoute(request.method, url.pathname, config);
+			if (!result.matched) {
+				const requested = `${request.method.toUpperCase()} ${url.pathname}`;
+				const detail: Record<string, unknown> = {
+					error: `Route not found: ${requested}`,
+					checked: result.checked,
+				};
+				if (result.suggestion) {
+					detail.suggestion = `Did you mean ${result.suggestion}?`;
+				}
+				log.warn("route_not_found", {
+					method: request.method,
+					path: url.pathname,
+					status: 404,
+					client_ip: clientIp ?? "unknown",
+				});
+				return finish(
+					RESERVED_ROUTE_LABELS.unmatched,
+					new Response(JSON.stringify(detail), {
+						status: 404,
+						headers: { "Content-Type": "application/json" },
+					}),
+				);
+			}
+
+			const { routeKey, route, upstream, params } = result;
+			matchedRouteKey = routeKey;
+
+			// Parse query
+			const query: Record<string, string> = {};
+			for (const [key, value] of url.searchParams.entries()) {
+				query[key] = value;
+			}
+
+			// Parse headers
+			const headers: Record<string, string> = {};
+			for (const [key, value] of request.headers.entries()) {
+				headers[key] = value;
+			}
+
+			// Buffer body if needed for matching
+			let parsedBody: unknown;
+			let rawBody: ArrayBuffer | undefined;
+			const needsBody = routeNeedsBody(route);
+
+			if (needsBody) {
+				const buffered = await bufferRequestBody(request);
+				parsedBody = buffered.parsed;
+				rawBody = buffered.raw;
+			}
+
+			// Build TollboothRequest
+			const tollboothReq: TollboothRequest = {
+				method: request.method,
+				path: url.pathname,
+				headers,
+				query,
+				body: parsedBody,
+				clientIp,
+				params,
+			};
+
+			let resolvedRoute: ResolvedRoute | undefined;
+			const settlementTiming = route.settlement ?? "before-response";
+
+			try {
+				// ── Identity (shared by rate limiting + verification cache) ──────
+				const identity = extractIdentity(request, { clientIp });
+
+				// ── Rate limiting ────────────────────────────────────────────────
+				const rateLimit = resolveRateLimit(route.rateLimit, config);
+				if (rateLimit) {
+					const rlResult = await checkRateLimit(
+						rateLimitStore,
 						identity,
-						client_ip: clientIp ?? "unknown",
-						limit: rlResult.limit,
-						retry_after_s: retryAfter,
-					});
-					return new Response(
-						JSON.stringify({
-							error: "Too many requests",
-							retryAfter: retryAfter,
-						}),
-						{
-							status: 429,
-							headers: {
-								"Content-Type": "application/json",
-								"Retry-After": String(retryAfter),
-							},
-						},
+						routeKey,
+						rateLimit,
 					);
-				}
-			}
-
-			// ── Hook: onRequest ───────────────────────────────────────────────
-			const onRequestResult = await runOnRequest(
-				{ req: tollboothReq },
-				route.hooks,
-				config.hooks,
-			);
-			if (onRequestResult?.reject) {
-				return new Response(onRequestResult.body ?? "Rejected", {
-					status: onRequestResult.status ?? 403,
-				});
-			}
-
-			// ── Resolve price ────────────────────────────────────────────────
-			let price: {
-				amount: bigint;
-				asset: string;
-				network: string;
-				payTo: string | import("./types.js").PayToSplit[];
-			};
-
-			if (route.type === "token-based" || route.type === "openai-compatible") {
-				const model = extractModel(parsedBody);
-				if (!model) {
-					return new Response(
-						JSON.stringify({
-							error: 'Missing or invalid "model" field in request body',
-							hint: 'token-based routes require a "model" string in the JSON body',
-						}),
-						{
-							status: 400,
-							headers: { "Content-Type": "application/json" },
-						},
-					);
-				}
-				price = resolveOpenAIPrice(model, route, config);
-			} else {
-				price = await resolvePrice({
-					route,
-					config,
-					body: parsedBody,
-					query,
-					headers,
-					params,
-				});
-			}
-
-			// Determine upstream path
-			const upstreamPath = route.path
-				? rewritePath(route.path, params, query)
-				: url.pathname;
-
-			resolvedRoute = {
-				upstream,
-				upstreamPath,
-				price: price.amount,
-				asset: price.asset,
-				network: price.network,
-				payTo: price.payTo,
-				routeKey,
-			};
-
-			// ── Hook: onPriceResolved ────────────────────────────────────────
-			const onPriceResult = await runOnPriceResolved(
-				{ req: tollboothReq, route: resolvedRoute },
-				route.hooks,
-				config.hooks,
-			);
-			if (onPriceResult?.reject) {
-				return new Response(onPriceResult.body ?? "Rejected", {
-					status: onPriceResult.status ?? 403,
-				});
-			}
-
-			// ── Zero price → skip payment, proxy directly ───────────────────
-			if (price.amount === 0n) {
-				if (
-					!rawBody &&
-					!["GET", "HEAD"].includes(request.method.toUpperCase())
-				) {
-					rawBody = await request.arrayBuffer();
+					if (!rlResult.allowed) {
+						const retryAfter = Math.ceil(rlResult.resetMs / 1000);
+						log.warn("rate_limited", {
+							method: request.method,
+							path: url.pathname,
+							route: routeKey,
+							identity,
+							client_ip: clientIp ?? "unknown",
+							limit: rlResult.limit,
+							retry_after_s: retryAfter,
+						});
+						metrics?.incRateLimitBlock(routeKey);
+						return finish(
+							routeKey,
+							new Response(
+								JSON.stringify({
+									error: "Too many requests",
+									retryAfter: retryAfter,
+								}),
+								{
+									status: 429,
+									headers: {
+										"Content-Type": "application/json",
+										"Retry-After": String(retryAfter),
+									},
+								},
+							),
+						);
+					}
 				}
 
-				const upstreamResponse = await proxyRequest(
-					upstream,
-					upstreamPath,
-					request,
-					rawBody,
-					route.upstream,
-				);
-
-				const hookResult = await runOnResponse(
-					{
-						req: tollboothReq,
-						route: resolvedRoute,
-						response: upstreamResponse,
-					},
+				// ── Hook: onRequest ───────────────────────────────────────────────
+				const onRequestResult = await runOnRequest(
+					{ req: tollboothReq },
 					route.hooks,
 					config.hooks,
 				);
+				if (onRequestResult?.reject) {
+					return finish(
+						routeKey,
+						new Response(onRequestResult.body ?? "Rejected", {
+							status: onRequestResult.status ?? 403,
+						}),
+					);
+				}
 
-				const finalResponse = isUpstreamResponse(hookResult)
-					? hookResult
-					: upstreamResponse;
+				// ── Resolve price ────────────────────────────────────────────────
+				let price: {
+					amount: bigint;
+					asset: string;
+					network: string;
+					payTo: string | import("./types.js").PayToSplit[];
+				};
 
-				return buildFinalResponse({
-					response: finalResponse,
-					price,
-					request,
-					clientIp,
-					url,
-					routeKey,
-					start,
-				});
-			}
-
-			const routePricing = getEffectiveRoutePricing(route);
-			const timeDuration =
-				routePricing.model === "time" ? routePricing.duration : undefined;
-			if (routePricing.model === "time" && !timeDuration) {
-				throw new Error(
-					`Route "${routeKey}" requires pricing.duration when pricing.model is "time"`,
-				);
-			}
-
-			const timeSessionDurationMs = timeDuration
-				? parseDuration(timeDuration)
-				: undefined;
-
-			// ── x402 payment flow ────────────────────────────────────────────
-			const accepts = route.accepts ?? config.accepts;
-			const requirements = buildPaymentRequirements(
-				price,
-				url.pathname,
-				routeKey,
-				config.defaults.timeout,
-				accepts,
-			);
-
-			// ── Extract payment from request ────────────────────────────────
-			const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
-			if (!paymentHeader && timeSessionDurationMs == null) {
-				return createPaymentRequiredResponse(requirements);
-			}
-			const payment = paymentHeader
-				? decodePaymentSignature(paymentHeader)
-				: null;
-
-			// ── Resolve settlement strategy ─────────────────────────────────
-			const strategy =
-				customStrategy ??
-				createFacilitatorStrategy(
-					accepts,
-					route.facilitator,
-					config.facilitator,
-					config.settlement?.url,
-				);
-
-			// ── Time-based pricing: skip settlement when session is still active ──
-			if (timeSessionDurationMs != null && payment) {
-				const claimedPayer = extractPayerFromPaymentHeader(request);
-				if (claimedPayer) {
-					const sessionKey = buildSessionKey(routeKey, claimedPayer);
-					const expiresAt = await timeSessionStore.get(sessionKey);
-					if (expiresAt != null) {
-						// Session exists — verify the signature is authentic before
-						// granting access (prevents forged payment-signature headers).
-						const verification = await strategy.verify(payment, requirements);
-
-						tollboothReq.payer = verification.payer ?? claimedPayer;
-
-						log.debug("time_session_active", {
+				if (
+					route.type === "token-based" ||
+					route.type === "openai-compatible"
+				) {
+					const model = extractModel(parsedBody);
+					if (!model) {
+						return finish(
 							routeKey,
-							payer: tollboothReq.payer,
-						});
-
-						if (
-							!rawBody &&
-							!["GET", "HEAD"].includes(request.method.toUpperCase())
-						) {
-							rawBody = await request.arrayBuffer();
-						}
-
-						const upstreamResponse = await proxyRequest(
-							upstream,
-							upstreamPath,
-							request,
-							rawBody,
-							route.upstream,
+							new Response(
+								JSON.stringify({
+									error: 'Missing or invalid "model" field in request body',
+									hint: 'token-based routes require a "model" string in the JSON body',
+								}),
+								{
+									status: 400,
+									headers: { "Content-Type": "application/json" },
+								},
+							),
 						);
+					}
+					price = resolveOpenAIPrice(model, route, config);
+				} else {
+					price = await resolvePrice({
+						route,
+						config,
+						body: parsedBody,
+						query,
+						headers,
+						params,
+					});
+				}
 
-						const hookResult = await runOnResponse(
-							{
-								req: tollboothReq,
-								route: resolvedRoute,
-								response: upstreamResponse,
-							},
-							route.hooks,
-							config.hooks,
-						);
+				// Determine upstream path
+				const upstreamPath = route.path
+					? rewritePath(route.path, params, query)
+					: url.pathname;
 
-						const finalResponse = isUpstreamResponse(hookResult)
-							? hookResult
-							: upstreamResponse;
+				resolvedRoute = {
+					upstream,
+					upstreamPath,
+					price: price.amount,
+					asset: price.asset,
+					network: price.network,
+					payTo: price.payTo,
+					routeKey,
+				};
 
-						return buildFinalResponse({
+				// ── Hook: onPriceResolved ────────────────────────────────────────
+				const onPriceResult = await runOnPriceResolved(
+					{ req: tollboothReq, route: resolvedRoute },
+					route.hooks,
+					config.hooks,
+				);
+				if (onPriceResult?.reject) {
+					return finish(
+						routeKey,
+						new Response(onPriceResult.body ?? "Rejected", {
+							status: onPriceResult.status ?? 403,
+						}),
+					);
+				}
+
+				// ── Zero price → skip payment, proxy directly ───────────────────
+				if (price.amount === 0n) {
+					if (
+						!rawBody &&
+						!["GET", "HEAD"].includes(request.method.toUpperCase())
+					) {
+						rawBody = await request.arrayBuffer();
+					}
+
+					const upstreamResponse = await proxyWithMetrics(
+						upstream,
+						upstreamPath,
+						request,
+						rawBody,
+						route.upstream,
+					);
+
+					const hookResult = await runOnResponse(
+						{
+							req: tollboothReq,
+							route: resolvedRoute,
+							response: upstreamResponse,
+						},
+						route.hooks,
+						config.hooks,
+					);
+
+					const finalResponse = isUpstreamResponse(hookResult)
+						? hookResult
+						: upstreamResponse;
+
+					return finish(
+						routeKey,
+						buildFinalResponse({
 							response: finalResponse,
 							price,
 							request,
@@ -679,149 +665,342 @@ export function createGateway(
 							url,
 							routeKey,
 							start,
-						});
-					}
+						}),
+					);
 				}
-			}
 
-			// No payment header → require payment
-			if (!paymentHeader || !payment) {
-				return createPaymentRequiredResponse(requirements);
-			}
+				const routePricing = getEffectiveRoutePricing(route);
+				const timeDuration =
+					routePricing.model === "time" ? routePricing.duration : undefined;
+				if (routePricing.model === "time" && !timeDuration) {
+					throw new Error(
+						`Route "${routeKey}" requires pricing.duration when pricing.model is "time"`,
+					);
+				}
 
-			// ── Verification cache config ────────────────────────────────────
-			const vcConfig = resolveVerificationCache(
-				route.verificationCache,
-				config,
-			);
-			const vcCacheKey =
-				identity.startsWith("payer:") && vcConfig
-					? `vc:${routeKey}:${identity}`
+				const timeSessionDurationMs = timeDuration
+					? parseDuration(timeDuration)
+					: undefined;
+
+				// ── x402 payment flow ────────────────────────────────────────────
+				const accepts = route.accepts ?? config.accepts;
+				const requirements = buildPaymentRequirements(
+					price,
+					url.pathname,
+					routeKey,
+					config.defaults.timeout,
+					accepts,
+				);
+
+				// ── Extract payment from request ────────────────────────────────
+				const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
+				if (!paymentHeader && timeSessionDurationMs == null) {
+					recordPaymentOutcome("missing");
+					return finish(routeKey, createPaymentRequiredResponse(requirements));
+				}
+				const payment = paymentHeader
+					? decodePaymentSignature(paymentHeader)
 					: null;
 
-			// ── Verify payment (with optional cache) ────────────────────────
-			const verification = await cachedVerify(
-				strategy,
-				payment,
-				paymentHeader,
-				requirements,
-				vcCacheKey,
-				vcConfig,
-			);
+				// ── Resolve settlement strategy ─────────────────────────────────
+				const strategy =
+					customStrategy ??
+					createFacilitatorStrategy(
+						accepts,
+						route.facilitator,
+						config.facilitator,
+						config.settlement?.url,
+					);
 
-			if (verification.payer) {
-				tollboothReq.payer = verification.payer;
-			}
+				// ── Time-based pricing: skip settlement when session is still active ──
+				if (timeSessionDurationMs != null && payment) {
+					const claimedPayer = extractPayerFromPaymentHeader(request);
+					if (claimedPayer) {
+						const sessionKey = buildSessionKey(routeKey, claimedPayer);
+						const expiresAt = await timeSessionStore.get(sessionKey);
+						if (expiresAt != null) {
+							// Session exists — verify the signature is authentic before
+							// granting access (prevents forged payment-signature headers).
+							const verification = await strategy.verify(payment, requirements);
+							recordPaymentOutcome("success");
 
-			// ── Branch on settlement timing ─────────────────────────────────
-			if (settlementTiming === "after-response") {
-				return await handleAfterResponse({
-					request,
-					clientIp,
-					tollboothReq,
-					resolvedRoute: resolvedRoute as ResolvedRoute,
+							tollboothReq.payer = verification.payer ?? claimedPayer;
+
+							log.debug("time_session_active", {
+								routeKey,
+								payer: tollboothReq.payer,
+							});
+
+							if (
+								!rawBody &&
+								!["GET", "HEAD"].includes(request.method.toUpperCase())
+							) {
+								rawBody = await request.arrayBuffer();
+							}
+
+							const upstreamResponse = await proxyWithMetrics(
+								upstream,
+								upstreamPath,
+								request,
+								rawBody,
+								route.upstream,
+							);
+
+							const hookResult = await runOnResponse(
+								{
+									req: tollboothReq,
+									route: resolvedRoute,
+									response: upstreamResponse,
+								},
+								route.hooks,
+								config.hooks,
+							);
+
+							const finalResponse = isUpstreamResponse(hookResult)
+								? hookResult
+								: upstreamResponse;
+
+							return finish(
+								routeKey,
+								buildFinalResponse({
+									response: finalResponse,
+									price,
+									request,
+									clientIp,
+									url,
+									routeKey,
+									start,
+								}),
+							);
+						}
+					}
+				}
+
+				// No payment header → require payment
+				if (!paymentHeader) {
+					recordPaymentOutcome("missing");
+					return finish(routeKey, createPaymentRequiredResponse(requirements));
+				}
+				if (!payment) {
+					recordPaymentOutcome("rejected");
+					return finish(routeKey, createPaymentRequiredResponse(requirements));
+				}
+
+				// ── Verification cache config ────────────────────────────────────
+				const vcConfig = resolveVerificationCache(
+					route.verificationCache,
+					config,
+				);
+				const vcCacheKey =
+					identity.startsWith("payer:") && vcConfig
+						? `vc:${routeKey}:${identity}`
+						: null;
+
+				// ── Verify payment (with optional cache) ────────────────────────
+				const verification = await cachedVerify(
+					strategy,
+					payment,
+					paymentHeader,
+					requirements,
+					routeKey,
+					vcCacheKey,
+					vcConfig,
+				);
+				recordPaymentOutcome("success");
+
+				if (verification.payer) {
+					tollboothReq.payer = verification.payer;
+				}
+
+				// ── Branch on settlement timing ─────────────────────────────────
+				if (settlementTiming === "after-response") {
+					return finish(
+						routeKey,
+						await handleAfterResponse({
+							request,
+							clientIp,
+							tollboothReq,
+							resolvedRoute: resolvedRoute as ResolvedRoute,
+							upstream,
+							upstreamPath,
+							rawBody,
+							requirements,
+							strategy,
+							verification,
+							price,
+							timeSessionDurationMs,
+							route,
+							routeKey,
+							url,
+							start,
+						}),
+					);
+				}
+
+				// ── before-response (default): settle immediately ───────────────
+				const settlement = await settleWithMetrics(strategy, verification);
+				tollboothReq.payer = settlement.payer;
+
+				log.info("payment_settled", {
+					payer: settlement.payer,
+					tx_hash: settlement.transaction,
+					amount: settlement.amount,
+					asset: price.asset,
+					network: price.network,
+				});
+
+				// ── Hook: onSettled ───────────────────────────────────────────────
+				const onSettledResult = await runOnSettled(
+					{ req: tollboothReq, route: resolvedRoute, settlement },
+					route.hooks,
+					config.hooks,
+				);
+				if (onSettledResult?.reject) {
+					return finish(
+						routeKey,
+						new Response(onSettledResult.body ?? "Rejected after settlement", {
+							status: onSettledResult.status ?? 403,
+						}),
+					);
+				}
+
+				if (timeSessionDurationMs != null) {
+					await grantTimeSession(
+						routeKey,
+						settlement.payer,
+						timeSessionDurationMs,
+					);
+				}
+
+				// ── Proxy to upstream ────────────────────────────────────────────
+				if (
+					!rawBody &&
+					!["GET", "HEAD"].includes(request.method.toUpperCase())
+				) {
+					rawBody = await request.arrayBuffer();
+				}
+
+				const upstreamResponse = await proxyWithMetrics(
 					upstream,
 					upstreamPath,
+					request,
 					rawBody,
-					requirements,
-					strategy,
-					verification,
-					price,
-					timeSessionDurationMs,
-					route,
-					routeKey,
-					url,
-					start,
-				});
-			}
+					route.upstream,
+				);
 
-			// ── before-response (default): settle immediately ───────────────
+				// ── Hook: onResponse ─────────────────────────────────────────────
+				const hookResult = await runOnResponse(
+					{
+						req: tollboothReq,
+						route: resolvedRoute,
+						settlement,
+						response: upstreamResponse,
+					},
+					route.hooks,
+					config.hooks,
+				);
+
+				// In before-response mode, only accept UpstreamResponse modifications
+				const finalResponse = isUpstreamResponse(hookResult)
+					? hookResult
+					: upstreamResponse;
+
+				return finish(
+					routeKey,
+					buildFinalResponse({
+						response: finalResponse,
+						settlement,
+						price,
+						request,
+						clientIp,
+						url,
+						routeKey,
+						start,
+					}),
+				);
+			} catch (error) {
+				if (error instanceof PaymentError && !paymentOutcomeRecorded) {
+					recordPaymentOutcome("rejected");
+				}
+				return finish(
+					routeKey,
+					handleError(error, {
+						request,
+						clientIp,
+						tollboothReq,
+						url,
+						routeKey,
+						route,
+						upstream,
+						params,
+						query,
+						resolvedRoute,
+						start,
+					}),
+				);
+			}
+		} finally {
+			metrics?.decActiveRequests();
+		}
+	}
+
+	function resolveStrategyLabel(
+		strategy: SettlementStrategy,
+	): SettlementStrategyLabel {
+		return strategy instanceof FacilitatorSettlement ? "facilitator" : "custom";
+	}
+
+	async function settleWithMetrics(
+		strategy: SettlementStrategy,
+		verification: SettlementVerification,
+	): Promise<SettlementInfo> {
+		const strategyLabel = resolveStrategyLabel(strategy);
+		const startedAt = performance.now();
+		try {
 			const settlement = await strategy.settle(verification);
-			tollboothReq.payer = settlement.payer;
-
-			log.info("payment_settled", {
-				payer: settlement.payer,
-				tx_hash: settlement.transaction,
-				amount: settlement.amount,
-				asset: price.asset,
-				network: price.network,
-			});
-
-			// ── Hook: onSettled ───────────────────────────────────────────────
-			const onSettledResult = await runOnSettled(
-				{ req: tollboothReq, route: resolvedRoute, settlement },
-				route.hooks,
-				config.hooks,
+			metrics?.incSettlement(strategyLabel, "success");
+			return settlement;
+		} catch (error) {
+			metrics?.incSettlement(strategyLabel, "failure");
+			throw error;
+		} finally {
+			metrics?.observeSettlementDuration(
+				strategyLabel,
+				(performance.now() - startedAt) / 1000,
 			);
-			if (onSettledResult?.reject) {
-				return new Response(
-					onSettledResult.body ?? "Rejected after settlement",
-					{ status: onSettledResult.status ?? 403 },
-				);
-			}
+		}
+	}
 
-			if (timeSessionDurationMs != null) {
-				await grantTimeSession(
-					routeKey,
-					settlement.payer,
-					timeSessionDurationMs,
-				);
-			}
-
-			// ── Proxy to upstream ────────────────────────────────────────────
-			if (!rawBody && !["GET", "HEAD"].includes(request.method.toUpperCase())) {
-				rawBody = await request.arrayBuffer();
-			}
-
+	async function proxyWithMetrics(
+		upstream: UpstreamConfig,
+		upstreamPath: string,
+		request: Request,
+		rawBody: ArrayBuffer | undefined,
+		upstreamLabel: string,
+	): Promise<UpstreamResponse> {
+		const startedAt = performance.now();
+		try {
 			const upstreamResponse = await proxyRequest(
 				upstream,
 				upstreamPath,
 				request,
 				rawBody,
-				route.upstream,
+				upstreamLabel,
 			);
-
-			// ── Hook: onResponse ─────────────────────────────────────────────
-			const hookResult = await runOnResponse(
-				{
-					req: tollboothReq,
-					route: resolvedRoute,
-					settlement,
-					response: upstreamResponse,
-				},
-				route.hooks,
-				config.hooks,
-			);
-
-			// In before-response mode, only accept UpstreamResponse modifications
-			const finalResponse = isUpstreamResponse(hookResult)
-				? hookResult
-				: upstreamResponse;
-
-			return buildFinalResponse({
-				response: finalResponse,
-				settlement,
-				price,
-				request,
-				clientIp,
-				url,
-				routeKey,
-				start,
-			});
+			if (upstreamResponse.status >= 500) {
+				metrics?.incUpstreamError(upstreamLabel, upstreamResponse.status);
+			}
+			return upstreamResponse;
 		} catch (error) {
-			return handleError(error, {
-				request,
-				clientIp,
-				tollboothReq,
-				url,
-				routeKey,
-				route,
-				upstream,
-				params,
-				query,
-				resolvedRoute,
-				start,
-			});
+			if (error instanceof UpstreamError) {
+				metrics?.incUpstreamError(upstreamLabel, 502);
+			}
+			throw error;
+		} finally {
+			metrics?.observeUpstreamDuration(
+				upstreamLabel,
+				(performance.now() - startedAt) / 1000,
+			);
 		}
 	}
 
@@ -855,7 +1034,7 @@ export function createGateway(
 
 		let upstreamResponse: UpstreamResponse;
 		try {
-			upstreamResponse = await proxyRequest(
+			upstreamResponse = await proxyWithMetrics(
 				upstream,
 				upstreamPath,
 				request,
@@ -939,7 +1118,7 @@ export function createGateway(
 
 		if (shouldSettle) {
 			// ── Settle via strategy ──────────────────────────────────────
-			const settlement = await strategy.settle(verification);
+			const settlement = await settleWithMetrics(strategy, verification);
 			tollboothReq.payer = settlement.payer;
 
 			log.info("payment_settled", {
@@ -1234,6 +1413,11 @@ export function createGateway(
 								openapi: `http://localhost:${server.port}/.well-known/openapi.json`,
 							}
 						: {}),
+					...(metrics
+						? {
+								metrics: `http://localhost:${server.port}${metricsPath}`,
+							}
+						: {}),
 				});
 			}
 		},
@@ -1262,6 +1446,7 @@ export function createGateway(
 		payment: unknown,
 		paymentHeader: string,
 		requirements: PaymentRequirementsPayload[],
+		routeLabel: string,
 		cacheKey: string | null,
 		cacheConfig: VerificationCacheConfig | undefined,
 	): Promise<SettlementVerification> {
@@ -1271,6 +1456,7 @@ export function createGateway(
 		if (isFacilitator && cacheKey && cacheConfig) {
 			const cached = await verificationCacheStore.get(cacheKey);
 			if (cached) {
+				metrics?.incCacheHit(routeLabel);
 				const idx = cached.requirementIndex;
 				if (idx >= requirements.length) {
 					log.warn("verification_cache_stale", {
@@ -1287,6 +1473,7 @@ export function createGateway(
 
 		// Cache miss — full verify via strategy
 		if (cacheKey) {
+			metrics?.incCacheMiss(routeLabel);
 			log.debug("verification_cache_miss", { route: cacheKey });
 		}
 		const verification = await strategy.verify(payment, requirements);
