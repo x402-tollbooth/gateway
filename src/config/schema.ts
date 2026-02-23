@@ -149,12 +149,29 @@ const upstreamConfigSchema = z.object({
 		.optional(),
 });
 
+const metricsConfigSchema = z
+	.object({
+		enabled: z.boolean().default(false),
+		path: z.string().min(1).default("/metrics"),
+	})
+	.strict()
+	.superRefine((metrics, ctx) => {
+		if (!metrics.path.startsWith("/")) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["path"],
+				message: 'Must start with "/"',
+			});
+		}
+	});
+
 export const tollboothConfigSchema = z.object({
 	gateway: z
 		.object({
 			port: z.number().int().positive().default(3000),
 			discovery: z.boolean().default(true),
 			hostname: z.string().optional(),
+			metrics: metricsConfigSchema.default({}),
 		})
 		.default({}),
 

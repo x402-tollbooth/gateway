@@ -21,6 +21,12 @@ export interface GatewayConfig {
 	port: number;
 	discovery: boolean;
 	hostname?: string;
+	metrics?: MetricsConfig;
+}
+
+export interface MetricsConfig {
+	enabled: boolean;
+	path: string;
 }
 
 export interface AcceptedPayment {

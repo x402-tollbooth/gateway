@@ -67,8 +67,32 @@ describe("tollboothConfigSchema", () => {
 		const result = tollboothConfigSchema.parse(validConfig);
 		expect(result.gateway.port).toBe(3000);
 		expect(result.gateway.discovery).toBe(true);
+		expect(result.gateway.metrics).toEqual({
+			enabled: false,
+			path: "/metrics",
+		});
 		expect(result.defaults.price).toBe("$0.001");
 		expect(result.defaults.timeout).toBe(60);
+	});
+
+	test("accepts gateway metrics config", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				metrics: { enabled: true, path: "/internal/metrics" },
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects metrics path without leading slash", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				metrics: { enabled: true, path: "metrics" },
+			},
+		});
+		expect(result.success).toBe(false);
 	});
 
 	test("rejects missing wallets", () => {
