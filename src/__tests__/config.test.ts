@@ -67,8 +67,54 @@ describe("tollboothConfigSchema", () => {
 		const result = tollboothConfigSchema.parse(validConfig);
 		expect(result.gateway.port).toBe(3000);
 		expect(result.gateway.discovery).toBe(true);
+		expect(result.gateway.trustProxy).toBe(false);
 		expect(result.defaults.price).toBe("$0.001");
 		expect(result.defaults.timeout).toBe(60);
+	});
+
+	test("accepts trustProxy as boolean", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				trustProxy: true,
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts trustProxy as hop count", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				trustProxy: 2,
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts trustProxy with cidr allowlist", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				trustProxy: {
+					hops: 2,
+					cidrs: ["10.0.0.0/8", "173.245.48.0/20"],
+				},
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects invalid trustProxy cidr", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...validConfig,
+			gateway: {
+				trustProxy: {
+					cidrs: ["not-a-cidr"],
+				},
+			},
+		});
+		expect(result.success).toBe(false);
 	});
 
 	test("rejects missing wallets", () => {

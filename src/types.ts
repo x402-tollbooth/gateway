@@ -21,6 +21,14 @@ export interface GatewayConfig {
 	port: number;
 	discovery: boolean;
 	hostname?: string;
+	trustProxy?: TrustProxyConfig;
+}
+
+export type TrustProxyConfig = boolean | number | TrustProxyOptions;
+
+export interface TrustProxyOptions {
+	hops?: number;
+	cidrs?: string[];
 }
 
 export interface AcceptedPayment {
@@ -185,6 +193,7 @@ export interface TollboothRequest {
 	query: Record<string, string>;
 	body?: unknown;
 	payer?: string;
+	clientIp?: string;
 	params: Record<string, string>;
 }
 

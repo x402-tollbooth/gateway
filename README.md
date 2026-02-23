@@ -283,6 +283,64 @@ The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed p
 - **Custom facilitator** — point to a self-hosted or alternative facilitator
 - **Pluggable settlement** — swap the default facilitator for a custom settlement backend
 
+## Proxy Deployments (`trustProxy`)
+
+By default, tollbooth **does not trust forwarded headers**. This is the safe default.
+
+If you run behind nginx, Cloudflare, or a load balancer, explicitly configure `gateway.trustProxy` so client IP resolution (rate limiting + logs) uses the real caller IP.
+
+```yaml
+gateway:
+  port: 3000
+  discovery: true
+  trustProxy: false # default (safe)
+```
+
+Supported values:
+
+- `true` — trust all forwarded hops (simple setups only)
+- `1`, `2`, ... — trust a fixed number of proxy hops
+- `{ hops, cidrs }` — trust only known proxy ranges (recommended for production)
+
+Example (recommended):
+
+```yaml
+gateway:
+  trustProxy:
+    hops: 2
+    cidrs:
+      - "10.0.0.0/8"
+      - "173.245.48.0/20" # Cloudflare IPv4 example
+```
+
+### nginx example
+
+```nginx
+location / {
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_pass http://127.0.0.1:3000;
+}
+```
+
+### Cloudflare + nginx (recommended)
+
+Only trust Cloudflare edges as proxy sources before passing headers to tollbooth:
+
+```nginx
+# Keep this list in sync with Cloudflare's published IP ranges.
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+real_ip_header CF-Connecting-IP;
+real_ip_recursive on;
+```
+
+Then set tollbooth `gateway.trustProxy` with matching `cidrs`.
+
+Warning: never enable `trustProxy` broadly on a public listener unless traffic is guaranteed to come through trusted proxies.
+
 ## Custom Facilitator
 
 By default, tollbooth uses `https://x402.org/facilitator`. You can override this globally or per-route:

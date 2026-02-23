@@ -45,6 +45,8 @@ export type {
 	TollboothGateway,
 	// Request/Response
 	TollboothRequest,
+	TrustProxyConfig,
+	TrustProxyOptions,
 	UpstreamConfig,
 	UpstreamResponse,
 } from "./types.js";

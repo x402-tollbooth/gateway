@@ -7,6 +7,7 @@ import {
 	runOnSettled,
 } from "./hooks/runner.js";
 import { log } from "./logger.js";
+import { resolveClientIp } from "./network/client-ip.js";
 import { extractModel, resolveOpenAIPrice } from "./openai/handler.js";
 import { buildExportSpec, importOpenAPIRoutes } from "./openapi/spec.js";
 import { getEffectiveRoutePricing } from "./pricing/config.js";
@@ -67,6 +68,7 @@ import { extractPayerFromPaymentHeader } from "./x402/payer.js";
 
 interface AfterResponseCtx {
 	request: Request;
+	clientIp?: string;
 	tollboothReq: TollboothRequest;
 	route: RouteConfig;
 	routeKey: string;
@@ -94,6 +96,7 @@ interface FinalResponseCtx {
 	settlementSkippedReason?: string;
 	price: { amount: bigint; asset: string };
 	request: Request;
+	clientIp?: string;
 	url: URL;
 	routeKey: string;
 	start: number;
@@ -101,6 +104,7 @@ interface FinalResponseCtx {
 
 interface ErrorCtx {
 	request: Request;
+	clientIp?: string;
 	tollboothReq: TollboothRequest;
 	url: URL;
 	routeKey: string;
@@ -129,6 +133,7 @@ export function createGateway(
 		options?.verificationCacheStore ?? new MemoryVerificationCacheStore();
 	const timeSessionStore =
 		options?.timeSessionStore ?? new MemoryTimeSessionStore();
+	const trustProxy = config.gateway.trustProxy ?? false;
 
 	const discoveryPayload = config.gateway.discovery
 		? JSON.stringify(generateDiscoveryMetadata(config))
@@ -140,9 +145,13 @@ export function createGateway(
 	// Cached OpenAPI export spec (built during start())
 	let openapiPayload: string | null = null;
 
-	async function handleRequest(request: Request): Promise<Response> {
+	async function handleRequest(
+		request: Request,
+		remoteIp?: string,
+	): Promise<Response> {
 		const start = performance.now();
 		const url = new URL(request.url);
+		const clientIp = resolveClientIp(request, { remoteIp, trustProxy });
 
 		// Discovery endpoint
 		if (discoveryPayload && url.pathname === "/.well-known/x402") {
@@ -180,6 +189,7 @@ export function createGateway(
 				method: request.method,
 				path: url.pathname,
 				status: 404,
+				client_ip: clientIp ?? "unknown",
 			});
 			return new Response(JSON.stringify(detail), {
 				status: 404,
@@ -219,6 +229,7 @@ export function createGateway(
 			headers,
 			query,
 			body: parsedBody,
+			clientIp,
 			params,
 		};
 
@@ -227,7 +238,7 @@ export function createGateway(
 
 		try {
 			// ── Identity (shared by rate limiting + verification cache) ──────
-			const identity = extractIdentity(request);
+			const identity = extractIdentity(request, { clientIp });
 
 			// ── Rate limiting ────────────────────────────────────────────────
 			const rateLimit = resolveRateLimit(route.rateLimit, config);
@@ -245,6 +256,7 @@ export function createGateway(
 						path: url.pathname,
 						route: routeKey,
 						identity,
+						client_ip: clientIp ?? "unknown",
 						limit: rlResult.limit,
 						retry_after_s: retryAfter,
 					});
@@ -372,6 +384,7 @@ export function createGateway(
 					response: finalResponse,
 					price,
 					request,
+					clientIp,
 					url,
 					routeKey,
 					start,
@@ -471,6 +484,7 @@ export function createGateway(
 							response: finalResponse,
 							price,
 							request,
+							clientIp,
 							url,
 							routeKey,
 							start,
@@ -512,6 +526,7 @@ export function createGateway(
 			if (settlementTiming === "after-response") {
 				return await handleAfterResponse({
 					request,
+					clientIp,
 					tollboothReq,
 					resolvedRoute: resolvedRoute as ResolvedRoute,
 					upstream,
@@ -597,6 +612,7 @@ export function createGateway(
 				settlement,
 				price,
 				request,
+				clientIp,
 				url,
 				routeKey,
 				start,
@@ -604,6 +620,7 @@ export function createGateway(
 		} catch (error) {
 			return handleError(error, {
 				request,
+				clientIp,
 				tollboothReq,
 				url,
 				routeKey,
@@ -624,6 +641,7 @@ export function createGateway(
 	async function handleAfterResponse(ctx: AfterResponseCtx): Promise<Response> {
 		const {
 			request,
+			clientIp,
 			tollboothReq,
 			resolvedRoute,
 			upstream,
@@ -682,6 +700,7 @@ export function createGateway(
 					method: request.method,
 					path: url.pathname,
 					route: routeKey,
+					client_ip: clientIp ?? "unknown",
 					upstream: error.upstreamUrl,
 					error: error.message,
 					duration_ms: Math.round(performance.now() - start),
@@ -766,6 +785,7 @@ export function createGateway(
 				settlement,
 				price,
 				request,
+				clientIp,
 				url,
 				routeKey,
 				start,
@@ -801,6 +821,7 @@ export function createGateway(
 			settlementSkippedReason: reason,
 			price,
 			request,
+			clientIp,
 			url,
 			routeKey,
 			start,
@@ -826,6 +847,7 @@ export function createGateway(
 			settlementSkippedReason,
 			price,
 			request,
+			clientIp,
 			url,
 			routeKey,
 			start,
@@ -859,6 +881,7 @@ export function createGateway(
 			method: request.method,
 			path: url.pathname,
 			route: routeKey,
+			client_ip: clientIp ?? "unknown",
 			price: formatPrice(price.amount, price.asset),
 			duration_ms,
 			status: finalResponse.status,
@@ -877,6 +900,7 @@ export function createGateway(
 	function handleError(error: unknown, ctx: ErrorCtx): Response {
 		const {
 			request,
+			clientIp,
 			tollboothReq,
 			url,
 			routeKey,
@@ -892,6 +916,7 @@ export function createGateway(
 				method: request.method,
 				path: url.pathname,
 				route: routeKey,
+				client_ip: clientIp ?? "unknown",
 				status: error.statusCode,
 				error: error.message,
 				duration_ms: Math.round(performance.now() - start),
@@ -907,6 +932,7 @@ export function createGateway(
 				method: request.method,
 				path: url.pathname,
 				route: routeKey,
+				client_ip: clientIp ?? "unknown",
 				upstream: error.upstreamUrl,
 				error: error.message,
 				duration_ms: Math.round(performance.now() - start),
@@ -937,6 +963,7 @@ export function createGateway(
 			method: request.method,
 			path: url.pathname,
 			route: routeKey,
+			client_ip: clientIp ?? "unknown",
 			error: errMsg,
 			duration_ms: Math.round(performance.now() - start),
 		});
@@ -990,7 +1017,10 @@ export function createGateway(
 			server = Bun.serve({
 				port: config.gateway.port,
 				hostname: config.gateway.hostname,
-				fetch: handleRequest,
+				fetch: (request, bunServer) => {
+					const remoteIp = bunServer.requestIP(request)?.address;
+					return handleRequest(request, remoteIp);
+				},
 			});
 			if (!options?.silent) {
 				log.info("started", {
