@@ -82,6 +82,7 @@ docker run -p 3000:3000 \
 
 | Platform                       | Guide                                  | Notes                                      |
 | ------------------------------ | -------------------------------------- | ------------------------------------------ |
+| Redis shared stores            | [Setup guide](docs/deploy/redis.md)    | Multi-instance consistency + restart-safe  |
 | [Fly.io](https://fly.io)       | [Deploy guide](docs/deploy/fly-io.md)  | `fly.toml` template, scale-to-zero support |
 | [Railway](https://railway.com) | [Deploy guide](docs/deploy/railway.md) | Docker-based, auto-deploy from GitHub      |
 
@@ -278,6 +279,7 @@ The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed p
 - **Lifecycle hooks** — `onRequest`, `onPriceResolved`, `onSettled`, `onResponse`, `onError`
 - **x402 V2** — modern headers, auto-discovery at `/.well-known/x402`
 - **Multi-chain** — accept payments on Base, Solana, or any supported network
+- **Browser-ready CORS** — configurable origins/methods/headers with strict defaults
 - **Path rewriting** — your public API shape doesn't need to match upstream
 - **Env var interpolation** — `${API_KEY}` in config, secrets stay in `.env`
 - **Custom facilitator** — point to a self-hosted or alternative facilitator
@@ -317,6 +319,64 @@ Example queries:
   `histogram_quantile(0.95, sum by (le, route, method) (rate(tollbooth_request_duration_seconds_bucket[5m])))`
 - 402 rate:
   `sum(rate(tollbooth_requests_total{status="402"}[5m])) / sum(rate(tollbooth_requests_total[5m]))`
+
+## Proxy Deployments (`trustProxy`)
+
+By default, tollbooth **does not trust forwarded headers**. This is the safe default.
+
+If you run behind nginx, Cloudflare, or a load balancer, explicitly configure `gateway.trustProxy` so client IP resolution (rate limiting + logs) uses the real caller IP.
+
+```yaml
+gateway:
+  port: 3000
+  discovery: true
+  trustProxy: false # default (safe)
+```
+
+Supported values:
+
+- `true` — trust all forwarded hops (simple setups only)
+- `1`, `2`, ... — trust a fixed number of proxy hops
+- `{ hops, cidrs }` — trust only known proxy ranges (recommended for production)
+
+Example (recommended):
+
+```yaml
+gateway:
+  trustProxy:
+    hops: 2
+    cidrs:
+      - "10.0.0.0/8"
+      - "173.245.48.0/20" # Cloudflare IPv4 example
+```
+
+### nginx example
+
+```nginx
+location / {
+  proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_pass http://127.0.0.1:3000;
+}
+```
+
+### Cloudflare + nginx (recommended)
+
+Only trust Cloudflare edges as proxy sources before passing headers to tollbooth:
+
+```nginx
+# Keep this list in sync with Cloudflare's published IP ranges.
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+real_ip_header CF-Connecting-IP;
+real_ip_recursive on;
+```
+
+Then set tollbooth `gateway.trustProxy` with matching `cidrs`.
+
+Warning: never enable `trustProxy` broadly on a public listener unless traffic is guaranteed to come through trusted proxies.
 
 ## Custom Facilitator
 
@@ -512,6 +572,68 @@ routes:
 
 Supported durations: `s`, `m`, `h`, `d` (for example `30m`, `1h`, `24h`).
 
+## Shared Stores (Redis)
+
+By default, tollbooth keeps rate limits, time sessions, and verification cache in memory.
+
+- `memory` is fine for a single instance.
+- `redis` is recommended for multi-instance or restart-safe deployments.
+
+Use the `stores` block to enable Redis per store:
+
+```yaml
+stores:
+  redis:
+    url: "redis://localhost:6379"
+    prefix: "tollbooth-prod"
+    options:
+      connectionTimeout: 5000
+      autoReconnect: true
+
+  rateLimit:
+    backend: redis
+
+  verificationCache:
+    backend: redis
+
+  timeSession:
+    backend: redis
+```
+
+You can override Redis connection details for one store:
+
+```yaml
+stores:
+  redis:
+    url: "redis://shared-cache:6379"
+    prefix: "tollbooth"
+
+  verificationCache:
+    backend: redis
+    redis:
+      url: "redis://verification-cache:6379"
+      prefix: "tollbooth-vc"
+```
+
+### docker-compose example
+
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  tollbooth:
+    image: ghcr.io/loa212/x402-tollbooth:latest
+    depends_on:
+      - redis
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./tollbooth.config.yaml:/app/tollbooth.config.yaml:ro
+```
+
 ## Multiple Upstreams
 
 Proxy to different APIs from a single gateway:
@@ -552,6 +674,44 @@ routes:
 ```
 
 Agents hit one gateway, pay with USDC, and get routed to the right upstream. No API keys needed on the caller side.
+
+## CORS (Browser Clients)
+
+To allow browser apps or paywall UIs to call tollbooth endpoints, configure CORS under `gateway.cors`.
+
+### Single origin
+
+```yaml
+gateway:
+  port: 3000
+  discovery: true
+  cors:
+    allowedOrigins:
+      - "https://app.example.com"
+    allowedMethods: ["GET", "POST"]
+    allowedHeaders: ["content-type", "payment-signature"]
+    exposedHeaders: ["payment-required", "payment-response"]
+    credentials: true
+    maxAge: 600
+```
+
+### Multiple origins
+
+```yaml
+gateway:
+  cors:
+    allowedOrigins:
+      - "https://app.example.com"
+      - "https://admin.example.com"
+    allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+    allowedHeaders: ["content-type", "payment-signature", "authorization"]
+    exposedHeaders: ["payment-required", "payment-response"]
+```
+
+Notes:
+- `allowedOrigins` is required and strict by default. No wildcard origin is used unless you explicitly set `"*"`.
+- Preflight `OPTIONS` is handled for proxied routes, `/.well-known/x402`, `/.well-known/openapi.json` (when enabled), and `/health`.
+- To read x402 headers from browser code, include `payment-required` / `payment-response` in `exposedHeaders`.
 
 ## Hooks
 

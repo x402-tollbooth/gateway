@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidIpOrCidr } from "../network/client-ip.js";
 
 const durationSchema = z
 	.string()
@@ -101,6 +102,110 @@ const settlementStrategySchema = z
 		"Custom settlement strategy requires a 'module' path",
 	);
 
+const redisUrlSchema = z
+	.string()
+	.url()
+	.refine(
+		(value) => value.startsWith("redis://") || value.startsWith("rediss://"),
+		'Must be a Redis URL like "redis://localhost:6379"',
+	);
+
+const redisStoreOptionsSchema = z
+	.object({
+		connectionTimeout: z.number().int().positive().optional(),
+		idleTimeout: z.number().int().nonnegative().optional(),
+		autoReconnect: z.boolean().optional(),
+		maxRetries: z.number().int().positive().optional(),
+		enableOfflineQueue: z.boolean().optional(),
+		enableAutoPipelining: z.boolean().optional(),
+	})
+	.strict();
+
+const redisConnectionSchema = z
+	.object({
+		url: redisUrlSchema,
+		prefix: z.string().min(1).optional(),
+		options: redisStoreOptionsSchema.optional(),
+	})
+	.strict();
+
+const redisConnectionOverrideSchema = z
+	.object({
+		url: redisUrlSchema.optional(),
+		prefix: z.string().min(1).optional(),
+		options: redisStoreOptionsSchema.optional(),
+	})
+	.strict();
+
+const storeSelectionSchema = z
+	.object({
+		backend: z.enum(["memory", "redis"]).optional(),
+		redis: redisConnectionOverrideSchema.optional(),
+	})
+	.strict();
+
+const storesSchema = z
+	.object({
+		redis: redisConnectionSchema.optional(),
+		rateLimit: storeSelectionSchema.optional(),
+		verificationCache: storeSelectionSchema.optional(),
+		timeSession: storeSelectionSchema.optional(),
+	})
+	.strict();
+
+const trustProxySchema = z.union([
+	z.boolean(),
+	z.number().int().positive(),
+	z
+		.object({
+			hops: z.number().int().positive().optional(),
+			cidrs: z
+				.array(
+					z
+						.string()
+						.min(1)
+						.refine(
+							(value) => isValidIpOrCidr(value),
+							'Must be a valid IP or CIDR (e.g. "203.0.113.0/24")',
+						),
+				)
+				.min(1)
+				.optional(),
+		})
+		.strict()
+		.refine(
+			(value) => value.hops != null || value.cidrs != null,
+			'Must include "hops" and/or "cidrs"',
+		),
+]);
+
+const corsSchema = z
+	.object({
+		allowedOrigins: z.array(z.string().min(1)).min(1),
+		allowedMethods: z
+			.array(z.string().min(1))
+			.min(1)
+			.default(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
+		allowedHeaders: z
+			.array(z.string().min(1))
+			.default(["content-type", "payment-signature"]),
+		exposedHeaders: z
+			.array(z.string().min(1))
+			.default(["payment-required", "payment-response"]),
+		credentials: z.boolean().default(false),
+		maxAge: z.number().int().nonnegative().optional(),
+	})
+	.strict()
+	.superRefine((cors, ctx) => {
+		if (cors.credentials && cors.allowedOrigins.includes("*")) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["allowedOrigins"],
+				message: 'Wildcard "*" origin is not allowed when credentials=true',
+			});
+		}
+	});
+
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
@@ -165,38 +270,62 @@ const metricsConfigSchema = z
 		}
 	});
 
-export const tollboothConfigSchema = z.object({
-	gateway: z
-		.object({
-			port: z.number().int().positive().default(3000),
-			discovery: z.boolean().default(true),
-			hostname: z.string().optional(),
-			metrics: metricsConfigSchema.default({}),
-		})
-		.default({}),
+export const tollboothConfigSchema = z
+	.object({
+		gateway: z
+			.object({
+				port: z.number().int().positive().default(3000),
+				discovery: z.boolean().default(true),
+				hostname: z.string().optional(),
+				metrics: metricsConfigSchema.default({}),
+				trustProxy: trustProxySchema.default(false),
+				cors: corsSchema.optional(),
+			})
+			.default({}),
 
-	wallets: z.record(z.string().min(1)),
+		wallets: z.record(z.string().min(1)),
 
-	accepts: z.array(acceptedPaymentSchema).min(1),
+		accepts: z.array(acceptedPaymentSchema).min(1),
 
-	defaults: z
-		.object({
-			price: z.string().default("$0.001"),
-			timeout: z.number().positive().default(60),
-			rateLimit: rateLimitSchema.optional(),
-			verificationCache: verificationCacheSchema.optional(),
-		})
-		.default({}),
+		defaults: z
+			.object({
+				price: z.string().default("$0.001"),
+				timeout: z.number().positive().default(60),
+				rateLimit: rateLimitSchema.optional(),
+				verificationCache: verificationCacheSchema.optional(),
+			})
+			.default({}),
 
-	upstreams: z.record(upstreamConfigSchema),
+		stores: storesSchema.optional(),
 
-	routes: z.record(routeConfigSchema),
+		upstreams: z.record(upstreamConfigSchema),
 
-	hooks: routeHooksSchema,
+		routes: z.record(routeConfigSchema),
 
-	facilitator: facilitatorSchema.optional(),
+		hooks: routeHooksSchema,
 
-	settlement: settlementStrategySchema.optional(),
-});
+		facilitator: facilitatorSchema.optional(),
+
+		settlement: settlementStrategySchema.optional(),
+	})
+	.superRefine((config, ctx) => {
+		const globalRedis = config.stores?.redis?.url;
+		const storeNames = [
+			"rateLimit",
+			"verificationCache",
+			"timeSession",
+		] as const;
+		for (const storeName of storeNames) {
+			const storeConfig = config.stores?.[storeName];
+			if (storeConfig?.backend !== "redis") continue;
+			const storeUrl = storeConfig.redis?.url ?? globalRedis;
+			if (storeUrl) continue;
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["stores", storeName, "redis", "url"],
+				message: `Required when stores.${storeName}.backend is "redis"`,
+			});
+		}
+	});
 
 export type TollboothConfigInput = z.input<typeof tollboothConfigSchema>;

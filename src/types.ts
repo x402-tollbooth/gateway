@@ -10,6 +10,7 @@ export interface TollboothConfig {
 	wallets: Record<string, string>;
 	accepts: AcceptedPayment[];
 	defaults: DefaultsConfig;
+	stores?: StoresConfig;
 	upstreams: Record<string, UpstreamConfig>;
 	routes: Record<string, RouteConfig>;
 	hooks?: GlobalHooksConfig;
@@ -22,11 +23,64 @@ export interface GatewayConfig {
 	discovery: boolean;
 	hostname?: string;
 	metrics?: MetricsConfig;
+	trustProxy?: TrustProxyConfig;
+	cors?: CorsConfig;
 }
 
 export interface MetricsConfig {
 	enabled: boolean;
 	path: string;
+}
+
+export type TrustProxyConfig = boolean | number | TrustProxyOptions;
+
+export interface TrustProxyOptions {
+	hops?: number;
+	cidrs?: string[];
+}
+
+export interface CorsConfig {
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedHeaders: string[];
+	exposedHeaders: string[];
+	credentials: boolean;
+	maxAge?: number;
+}
+
+export type StoreBackend = "memory" | "redis";
+
+export interface RedisStoreOptions {
+	connectionTimeout?: number;
+	idleTimeout?: number;
+	autoReconnect?: boolean;
+	maxRetries?: number;
+	enableOfflineQueue?: boolean;
+	enableAutoPipelining?: boolean;
+}
+
+export interface RedisStoreConnectionConfig {
+	url: string;
+	prefix?: string;
+	options?: RedisStoreOptions;
+}
+
+export interface RedisStoreConnectionOverride {
+	url?: string;
+	prefix?: string;
+	options?: RedisStoreOptions;
+}
+
+export interface StoreSelectionConfig {
+	backend?: StoreBackend;
+	redis?: RedisStoreConnectionOverride;
+}
+
+export interface StoresConfig {
+	redis?: RedisStoreConnectionConfig;
+	rateLimit?: StoreSelectionConfig;
+	verificationCache?: StoreSelectionConfig;
+	timeSession?: StoreSelectionConfig;
 }
 
 export interface AcceptedPayment {
@@ -191,6 +245,7 @@ export interface TollboothRequest {
 	query: Record<string, string>;
 	body?: unknown;
 	payer?: string;
+	clientIp?: string;
 	params: Record<string, string>;
 }
 
