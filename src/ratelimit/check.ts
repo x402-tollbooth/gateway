@@ -1,8 +1,10 @@
+import { resolveClientIp } from "../network/client-ip.js";
 import type {
 	RateLimitConfig,
 	RateLimitResult,
 	RateLimitStore,
 	TollboothConfig,
+	TrustProxyConfig,
 } from "../types.js";
 import { extractPayerFromPaymentHeader } from "../x402/payer.js";
 import { parseWindow } from "./store.js";
@@ -12,22 +14,30 @@ import { parseWindow } from "./store.js";
  *
  * Priority:
  *   1. Wallet address decoded from the payment-signature header
- *   2. Client IP from X-Forwarded-For or connection
+ *   2. Client IP from remote socket / trusted forwarded headers
  */
-export function extractIdentity(request: Request): string {
+export function extractIdentity(
+	request: Request,
+	options?: {
+		clientIp?: string;
+		remoteIp?: string;
+		trustProxy?: TrustProxyConfig;
+	},
+): string {
 	const payer = extractPayerFromPaymentHeader(request);
 	if (payer) {
 		return `payer:${payer}`;
 	}
 
-	const forwarded = request.headers.get("x-forwarded-for");
-	if (forwarded) {
-		const ip = forwarded.split(",")[0].trim();
-		if (ip) return `ip:${ip}`;
-	}
+	const ip =
+		options?.clientIp ??
+		resolveClientIp(request, {
+			remoteIp: options?.remoteIp,
+			trustProxy: options?.trustProxy,
+		});
+	if (ip) return `ip:${ip}`;
 
-	// Bun exposes the remote address on the server object, but it isn't on
-	// the Request itself. Fall back to a generic key.
+	// Fall back to a generic key when no payer or IP can be determined.
 	return "ip:unknown";
 }
 

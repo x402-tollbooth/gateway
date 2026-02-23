@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidIpOrCidr } from "../network/client-ip.js";
 
 const durationSchema = z
 	.string()
@@ -101,6 +102,32 @@ const settlementStrategySchema = z
 		"Custom settlement strategy requires a 'module' path",
 	);
 
+const trustProxySchema = z.union([
+	z.boolean(),
+	z.number().int().positive(),
+	z
+		.object({
+			hops: z.number().int().positive().optional(),
+			cidrs: z
+				.array(
+					z
+						.string()
+						.min(1)
+						.refine(
+							(value) => isValidIpOrCidr(value),
+							'Must be a valid IP or CIDR (e.g. "203.0.113.0/24")',
+						),
+				)
+				.min(1)
+				.optional(),
+		})
+		.strict()
+		.refine(
+			(value) => value.hops != null || value.cidrs != null,
+			'Must include "hops" and/or "cidrs"',
+		),
+]);
+
 const corsSchema = z
 	.object({
 		allowedOrigins: z.array(z.string().min(1)).min(1),
@@ -182,6 +209,7 @@ export const tollboothConfigSchema = z.object({
 			port: z.number().int().positive().default(3000),
 			discovery: z.boolean().default(true),
 			hostname: z.string().optional(),
+			trustProxy: trustProxySchema.default(false),
 			cors: corsSchema.optional(),
 		})
 		.default({}),

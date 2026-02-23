@@ -21,7 +21,15 @@ export interface GatewayConfig {
 	port: number;
 	discovery: boolean;
 	hostname?: string;
+	trustProxy?: TrustProxyConfig;
 	cors?: CorsConfig;
+}
+
+export type TrustProxyConfig = boolean | number | TrustProxyOptions;
+
+export interface TrustProxyOptions {
+	hops?: number;
+	cidrs?: string[];
 }
 
 export interface CorsConfig {
@@ -195,6 +203,7 @@ export interface TollboothRequest {
 	query: Record<string, string>;
 	body?: unknown;
 	payer?: string;
+	clientIp?: string;
 	params: Record<string, string>;
 }
 
