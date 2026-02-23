@@ -9,6 +9,7 @@ export { FacilitatorSettlement } from "./settlement/facilitator.js";
 
 export type {
 	AcceptedPayment,
+	CorsConfig,
 	DefaultsConfig,
 	ErrorHook,
 	ErrorHookContext,

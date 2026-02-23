@@ -278,6 +278,7 @@ The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed p
 - **Lifecycle hooks** — `onRequest`, `onPriceResolved`, `onSettled`, `onResponse`, `onError`
 - **x402 V2** — modern headers, auto-discovery at `/.well-known/x402`
 - **Multi-chain** — accept payments on Base, Solana, or any supported network
+- **Browser-ready CORS** — configurable origins/methods/headers with strict defaults
 - **Path rewriting** — your public API shape doesn't need to match upstream
 - **Env var interpolation** — `${API_KEY}` in config, secrets stay in `.env`
 - **Custom facilitator** — point to a self-hosted or alternative facilitator
@@ -575,6 +576,44 @@ routes:
 ```
 
 Agents hit one gateway, pay with USDC, and get routed to the right upstream. No API keys needed on the caller side.
+
+## CORS (Browser Clients)
+
+To allow browser apps or paywall UIs to call tollbooth endpoints, configure CORS under `gateway.cors`.
+
+### Single origin
+
+```yaml
+gateway:
+  port: 3000
+  discovery: true
+  cors:
+    allowedOrigins:
+      - "https://app.example.com"
+    allowedMethods: ["GET", "POST"]
+    allowedHeaders: ["content-type", "payment-signature"]
+    exposedHeaders: ["payment-required", "payment-response"]
+    credentials: true
+    maxAge: 600
+```
+
+### Multiple origins
+
+```yaml
+gateway:
+  cors:
+    allowedOrigins:
+      - "https://app.example.com"
+      - "https://admin.example.com"
+    allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
+    allowedHeaders: ["content-type", "payment-signature", "authorization"]
+    exposedHeaders: ["payment-required", "payment-response"]
+```
+
+Notes:
+- `allowedOrigins` is required and strict by default. No wildcard origin is used unless you explicitly set `"*"`.
+- Preflight `OPTIONS` is handled for proxied routes, `/.well-known/x402`, `/.well-known/openapi.json` (when enabled), and `/health`.
+- To read x402 headers from browser code, include `payment-required` / `payment-response` in `exposedHeaders`.
 
 ## Hooks
 

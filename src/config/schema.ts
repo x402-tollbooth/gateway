@@ -128,6 +128,33 @@ const trustProxySchema = z.union([
 		),
 ]);
 
+const corsSchema = z
+	.object({
+		allowedOrigins: z.array(z.string().min(1)).min(1),
+		allowedMethods: z
+			.array(z.string().min(1))
+			.min(1)
+			.default(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
+		allowedHeaders: z
+			.array(z.string().min(1))
+			.default(["content-type", "payment-signature"]),
+		exposedHeaders: z
+			.array(z.string().min(1))
+			.default(["payment-required", "payment-response"]),
+		credentials: z.boolean().default(false),
+		maxAge: z.number().int().nonnegative().optional(),
+	})
+	.strict()
+	.superRefine((cors, ctx) => {
+		if (cors.credentials && cors.allowedOrigins.includes("*")) {
+			ctx.addIssue({
+				code: z.ZodIssueCode.custom,
+				path: ["allowedOrigins"],
+				message: 'Wildcard "*" origin is not allowed when credentials=true',
+			});
+		}
+	});
+
 const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
@@ -183,6 +210,7 @@ export const tollboothConfigSchema = z.object({
 			discovery: z.boolean().default(true),
 			hostname: z.string().optional(),
 			trustProxy: trustProxySchema.default(false),
+			cors: corsSchema.optional(),
 		})
 		.default({}),
 

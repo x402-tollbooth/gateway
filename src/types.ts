@@ -22,6 +22,7 @@ export interface GatewayConfig {
 	discovery: boolean;
 	hostname?: string;
 	trustProxy?: TrustProxyConfig;
+	cors?: CorsConfig;
 }
 
 export type TrustProxyConfig = boolean | number | TrustProxyOptions;
@@ -29,6 +30,15 @@ export type TrustProxyConfig = boolean | number | TrustProxyOptions;
 export interface TrustProxyOptions {
 	hops?: number;
 	cidrs?: string[];
+}
+
+export interface CorsConfig {
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedHeaders: string[];
+	exposedHeaders: string[];
+	credentials: boolean;
+	maxAge?: number;
 }
 
 export interface AcceptedPayment {
