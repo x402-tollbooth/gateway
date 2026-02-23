@@ -23,6 +23,11 @@ export type {
 	PricingFn,
 	PricingFnInput,
 	PricingModel,
+	RateLimitResult,
+	RateLimitStore,
+	RedisStoreConnectionConfig,
+	RedisStoreConnectionOverride,
+	RedisStoreOptions,
 	// Hooks
 	RequestHook,
 	RequestHookContext,
@@ -40,6 +45,9 @@ export type {
 	SettlementStrategy,
 	SettlementStrategyConfig,
 	SettlementVerification,
+	StoreBackend,
+	StoreSelectionConfig,
+	StoresConfig,
 	TimeSessionStore,
 	TollboothConfig,
 	TollboothError,
@@ -50,6 +58,9 @@ export type {
 	TrustProxyOptions,
 	UpstreamConfig,
 	UpstreamResponse,
+	VerificationCacheConfig,
+	VerificationCacheEntry,
+	VerificationCacheStore,
 } from "./types.js";
 
 // ── Utilities ────────────────────────────────────────────────────────────────
@@ -65,4 +76,9 @@ export {
 } from "./openapi/spec.js";
 export { DEFAULT_MODEL_PRICES } from "./pricing/models.js";
 export { formatPrice, parsePrice } from "./pricing/parser.js";
+export { RedisRateLimitStore } from "./ratelimit/redis-store.js";
+export { MemoryRateLimitStore } from "./ratelimit/store.js";
+export { RedisTimeSessionStore } from "./session/redis-store.js";
 export { MemoryTimeSessionStore } from "./session/store.js";
+export { RedisVerificationCacheStore } from "./verification-cache/redis-store.js";
+export { MemoryVerificationCacheStore } from "./verification-cache/store.js";

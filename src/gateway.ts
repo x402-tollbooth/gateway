@@ -1,3 +1,4 @@
+import { RedisClient } from "bun";
 import { generateDiscoveryMetadata } from "./discovery/metadata.js";
 import {
 	runOnError,
@@ -20,9 +21,11 @@ import {
 	extractIdentity,
 	resolveRateLimit,
 } from "./ratelimit/check.js";
+import { RedisRateLimitStore } from "./ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
 import { getMethodsForPath, matchRoute } from "./router/router.js";
+import { RedisTimeSessionStore } from "./session/redis-store.js";
 import {
 	buildSessionKey,
 	MemoryTimeSessionStore,
@@ -33,6 +36,10 @@ import {
 	createFacilitatorStrategy,
 	initSettlementStrategy,
 } from "./settlement/loader.js";
+import {
+	buildRedisStorePrefix,
+	resolveRedisStoreConfig,
+} from "./store/resolve.js";
 import type {
 	CorsConfig,
 	PaymentRequirementsPayload,
@@ -53,6 +60,7 @@ import type {
 	VerificationCacheConfig,
 	VerificationCacheStore,
 } from "./types.js";
+import { RedisVerificationCacheStore } from "./verification-cache/redis-store.js";
 import { MemoryVerificationCacheStore } from "./verification-cache/store.js";
 import {
 	decodePaymentSignature,
@@ -142,11 +150,13 @@ export function createGateway(
 	},
 ): TollboothGateway {
 	let server: ReturnType<typeof Bun.serve> | null = null;
-	const rateLimitStore = options?.rateLimitStore ?? new MemoryRateLimitStore();
+	const rateLimitStore =
+		options?.rateLimitStore ?? createRateLimitStoreFromConfig(config);
 	const verificationCacheStore =
-		options?.verificationCacheStore ?? new MemoryVerificationCacheStore();
+		options?.verificationCacheStore ??
+		createVerificationCacheStoreFromConfig(config);
 	const timeSessionStore =
-		options?.timeSessionStore ?? new MemoryTimeSessionStore();
+		options?.timeSessionStore ?? createTimeSessionStoreFromConfig(config);
 	const trustProxy = config.gateway.trustProxy ?? false;
 
 	const discoveryPayload = config.gateway.discovery
@@ -1230,13 +1240,9 @@ export function createGateway(
 		async stop() {
 			server?.stop();
 			server = null;
-			if (rateLimitStore instanceof MemoryRateLimitStore) {
-				rateLimitStore.destroy();
-			}
-			if (verificationCacheStore instanceof MemoryVerificationCacheStore) {
-				verificationCacheStore.destroy();
-			}
-			timeSessionStore.close();
+			destroyOrCloseStore(rateLimitStore);
+			destroyOrCloseStore(verificationCacheStore);
+			destroyOrCloseStore(timeSessionStore);
 		},
 	};
 
@@ -1304,6 +1310,49 @@ export function createGateway(
 
 		return verification;
 	}
+}
+
+function createRateLimitStoreFromConfig(
+	config: TollboothConfig,
+): RateLimitStore {
+	const redis = resolveRedisStoreConfig(config, "rateLimit");
+	if (!redis) return new MemoryRateLimitStore();
+	return new RedisRateLimitStore(new RedisClient(redis.url, redis.options), {
+		prefix: buildRedisStorePrefix(redis.prefix, "rateLimit"),
+		closeClient: true,
+	});
+}
+
+function createVerificationCacheStoreFromConfig(
+	config: TollboothConfig,
+): VerificationCacheStore {
+	const redis = resolveRedisStoreConfig(config, "verificationCache");
+	if (!redis) return new MemoryVerificationCacheStore();
+	return new RedisVerificationCacheStore(
+		new RedisClient(redis.url, redis.options),
+		{
+			prefix: buildRedisStorePrefix(redis.prefix, "verificationCache"),
+			closeClient: true,
+		},
+	);
+}
+
+function createTimeSessionStoreFromConfig(
+	config: TollboothConfig,
+): TimeSessionStore {
+	const redis = resolveRedisStoreConfig(config, "timeSession");
+	if (!redis) return new MemoryTimeSessionStore();
+	return new RedisTimeSessionStore(new RedisClient(redis.url, redis.options), {
+		prefix: buildRedisStorePrefix(redis.prefix, "timeSession"),
+		closeClient: true,
+	});
+}
+
+function destroyOrCloseStore(store: unknown): void {
+	if (!store || typeof store !== "object") return;
+	const maybeStore = store as { destroy?: () => void; close?: () => void };
+	maybeStore.destroy?.();
+	maybeStore.close?.();
 }
 
 function shouldSettleByDefault(status: number): boolean {
