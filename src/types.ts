@@ -21,6 +21,16 @@ export interface GatewayConfig {
 	port: number;
 	discovery: boolean;
 	hostname?: string;
+	cors?: CorsConfig;
+}
+
+export interface CorsConfig {
+	allowedOrigins: string[];
+	allowedMethods: string[];
+	allowedHeaders: string[];
+	exposedHeaders: string[];
+	credentials: boolean;
+	maxAge?: number;
 }
 
 export interface AcceptedPayment {
