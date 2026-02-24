@@ -13,7 +13,7 @@ Tollbooth is an API gateway that sits in front of your upstream APIs and charges
 ## Quickstart
 
 ```bash
-bun add tollbooth
+bun add x402-tollbooth
 ```
 
 Create `tollbooth.config.yaml`:
@@ -41,7 +41,7 @@ routes:
 Start:
 
 ```bash
-npx tollbooth start
+npx x402-tollbooth start
 ```
 
 That's it. `GET /data` now requires an x402 payment of $0.01 USDC.
@@ -86,8 +86,8 @@ docker run -p 3000:3000 \
 | Platform                       | Guide                                  | Notes                                      |
 | ------------------------------ | -------------------------------------- | ------------------------------------------ |
 | Redis shared stores            | [Setup guide](docs/deploy/redis.md)    | Multi-instance consistency + restart-safe  |
-| [Fly.io](https://fly.io)       | [Deploy guide](docs/deploy/fly-io.md)  | `fly.toml` template, scale-to-zero support |
-| [Railway](https://railway.com) | [Deploy guide](docs/deploy/railway.md) | Docker-based, auto-deploy from GitHub      |
+| [Fly.io](https://fly.io)       | [Deploy guide](https://docs.tollbooth.sh/deploy/fly-io)  | `fly.toml` template, scale-to-zero support |
+| [Railway](https://railway.com) | [Deploy guide](https://docs.tollbooth.sh/deploy/railway) | Docker-based, auto-deploy from GitHub      |
 
 All guides use the published Docker image (`ghcr.io/loa212/x402-tollbooth`). You can also deploy on any platform that runs Docker containers.
 
@@ -433,7 +433,7 @@ settlement:
 
 ```ts
 // settlement/my-strategy.ts
-import type { SettlementStrategy } from "tollbooth";
+import type { SettlementStrategy } from "x402-tollbooth";
 
 const strategy: SettlementStrategy = {
   async verify(payment, requirements) {
@@ -542,14 +542,16 @@ routes:
 
 ```ts
 // pricing/completions.ts
-import type { PricingFn } from "tollbooth";
+import type { PricingFn } from "x402-tollbooth";
 
-export default: PricingFn = ({ body }) => {
+const pricingFn: PricingFn = ({ body }) => {
   const model = (body as any)?.model ?? "claude-sonnet";
   const maxTokens = (body as any)?.max_tokens ?? 1024;
   const rate = model.includes("opus") ? 0.015 : 0.003;
   return rate * Math.ceil(maxTokens / 1000);
 };
+
+export default pricingFn;
 ```
 
 ## Time-Based Pricing
@@ -747,7 +749,7 @@ Available hooks:
 ## Programmatic API
 
 ```ts
-import { createGateway, loadConfig } from "tollbooth";
+import { createGateway, loadConfig } from "x402-tollbooth";
 
 const config = loadConfig("./tollbooth.config.yaml");
 const gateway = createGateway(config);
@@ -758,7 +760,7 @@ await gateway.start();
 
 ```bash
 tollbooth start [--config=path]     # start the gateway
-tollbooth dev [--config=path]       # start with watch mode
+tollbooth dev [--config=path]       # start in dev mode
 tollbooth validate [--config=path]  # validate config
 ```
 
