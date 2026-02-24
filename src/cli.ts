@@ -74,7 +74,7 @@ Usage:
   tollbooth init                     Generate a config file interactively
   tollbooth init --from openapi <path>  Generate config from an OpenAPI spec
   tollbooth start [--config=path]    Start the gateway
-  tollbooth dev [--config=path]      Start in dev mode (with watch)
+  tollbooth dev [--config=path]      Start in dev mode
   tollbooth validate [--config=path] Validate config without starting
   tollbooth help                     Show this help message
 `);
