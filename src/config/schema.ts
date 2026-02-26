@@ -271,7 +271,11 @@ const metricsConfigSchema = z
 		}
 	});
 
-export const tollboothConfigSchema: z.ZodType<TollboothConfig, ZodTypeDef, unknown> = z
+export const tollboothConfigSchema: z.ZodType<
+	TollboothConfig,
+	ZodTypeDef,
+	unknown
+> = z
 	.object({
 		gateway: z
 			.object({
@@ -328,4 +332,3 @@ export const tollboothConfigSchema: z.ZodType<TollboothConfig, ZodTypeDef, unkno
 			});
 		}
 	});
-
