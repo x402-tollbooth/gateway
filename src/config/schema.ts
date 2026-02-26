@@ -1,5 +1,6 @@
-import { z } from "zod";
+import { type ZodTypeDef, z } from "zod";
 import { isValidIpOrCidr } from "../network/client-ip.js";
+import type { TollboothConfig } from "../types.js";
 
 const durationSchema = z
 	.string()
@@ -270,7 +271,11 @@ const metricsConfigSchema = z
 		}
 	});
 
-export const tollboothConfigSchema = z
+export const tollboothConfigSchema: z.ZodType<
+	TollboothConfig,
+	ZodTypeDef,
+	unknown
+> = z
 	.object({
 		gateway: z
 			.object({
@@ -327,5 +332,3 @@ export const tollboothConfigSchema = z
 			});
 		}
 	});
-
-export type TollboothConfigInput = z.input<typeof tollboothConfigSchema>;
