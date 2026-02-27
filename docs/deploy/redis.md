@@ -51,7 +51,7 @@ services:
       - "6379:6379"
 
   tollbooth:
-    image: ghcr.io/loa212/x402-tollbooth:latest
+    image: ghcr.io/x402-tollbooth/gateway:latest
     depends_on:
       - redis
     volumes:

@@ -61,11 +61,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Loa212/x402-tollbooth.git"
+    "url": "git+https://github.com/x402-tollbooth/gateway.git"
   },
-  "homepage": "https://github.com/Loa212/x402-tollbooth#readme",
+  "homepage": "https://github.com/x402-tollbooth/gateway#readme",
   "bugs": {
-    "url": "https://github.com/Loa212/x402-tollbooth/issues"
+    "url": "https://github.com/x402-tollbooth/gateway/issues"
   },
   "engines": {
     "bun": ">=1.0.0"

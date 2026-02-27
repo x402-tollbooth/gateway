@@ -1,7 +1,7 @@
 # x402 Tollbooth
 
 [![npm version](https://img.shields.io/npm/v/x402-tollbooth.svg)](https://www.npmjs.com/package/x402-tollbooth)
-[![Publish to npm](https://github.com/Loa212/x402-tollbooth/actions/workflows/publish.yml/badge.svg)](https://github.com/Loa212/x402-tollbooth/actions/workflows/publish.yml)
+[![Publish to npm](https://github.com/x402-tollbooth/gateway/actions/workflows/publish.yml/badge.svg)](https://github.com/x402-tollbooth/gateway/actions/workflows/publish.yml)
 [![Docs](https://img.shields.io/badge/docs-tollbooth-blue)](https://docs.tollbooth.sh/)
 
 Turn any API into a paid [x402](https://x402.org) API. One YAML config, zero code.
@@ -76,7 +76,7 @@ Client                    Tollbooth                  Upstream API
 
 ```bash
 docker run -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
-  ghcr.io/loa212/x402-tollbooth:latest
+  ghcr.io/x402-tollbooth/gateway:latest
 ```
 
 Available tags: `latest`, `0.5.0` / `0.5`, or a specific commit SHA.
