@@ -1,4 +1,4 @@
-# ⛩️ x402 Tollbooth
+# x402 Tollbooth
 
 [![npm version](https://img.shields.io/npm/v/x402-tollbooth.svg)](https://www.npmjs.com/package/x402-tollbooth)
 [![Publish to npm](https://github.com/Loa212/x402-tollbooth/actions/workflows/publish.yml/badge.svg)](https://github.com/Loa212/x402-tollbooth/actions/workflows/publish.yml)
@@ -6,9 +6,9 @@
 
 Turn any API into a paid [x402](https://x402.org) API. One YAML config, zero code.
 
-**[Read the full docs →](https://docs.tollbooth.sh/)**
+**[Full docs →](https://docs.tollbooth.sh/)**
 
-Tollbooth is an API gateway that sits in front of your upstream APIs and charges callers using the x402 payment protocol (per-request or time-window access). No API keys, no subscriptions — just instant USDC micropayments.
+Tollbooth is an API gateway that sits in front of your upstream APIs and charges callers using the x402 payment protocol. No API keys, no subscriptions — just instant USDC micropayments.
 
 ## Quickstart
 
@@ -38,713 +38,74 @@ routes:
     price: "$0.01"
 ```
 
-Start:
-
 ```bash
 npx x402-tollbooth start
 ```
 
-That's it. `GET /data` now requires an x402 payment of $0.01 USDC.
+`GET /data` now requires an x402 payment of $0.01 USDC.
+
+## How it works
+
+```
+Client                    Tollbooth                  Upstream API
+  │                          │                           │
+  │  GET /data               │                           │
+  │─────────────────────────>│                           │
+  │                          │  (match route, price)     │
+  │  402 + PAYMENT-REQUIRED  │                           │
+  │<─────────────────────────│                           │
+  │                          │                           │
+  │  (sign USDC payment)     │                           │
+  │                          │                           │
+  │  GET /data               │                           │
+  │  + PAYMENT-SIGNATURE     │                           │
+  │─────────────────────────>│                           │
+  │                          │  verify + settle          │
+  │                          │  (via facilitator)        │
+  │                          │                           │
+  │                          │  GET /data                │
+  │                          │──────────────────────────>│
+  │                          │  { data: ... }            │
+  │                          │<──────────────────────────│
+  │  200 + data              │                           │
+  │  + PAYMENT-RESPONSE      │                           │
+  │<─────────────────────────│                           │
+```
 
 ## Docker
-
-Run tollbooth without installing Bun — just mount your config:
 
 ```bash
 docker run -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
   ghcr.io/loa212/x402-tollbooth:latest
 ```
 
-Pass a custom port or config path:
-
-```bash
-docker run -p 8080:8080 \
-  -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
-  ghcr.io/loa212/x402-tollbooth:latest \
-  start --config=/app/tollbooth.config.yaml --port=8080
-```
-
-Use env vars for secrets:
-
-```bash
-docker run -p 3000:3000 \
-  -e API_KEY=sk-... \
-  -v ./tollbooth.config.yaml:/app/tollbooth.config.yaml \
-  ghcr.io/loa212/x402-tollbooth:latest
-```
-
-### Available tags
-
-| Tag             | Description              |
-| --------------- | ------------------------ |
-| `latest`        | Latest build from `main` |
-| `0.4.0` / `0.4` | Specific release version |
-| `<sha>`         | Specific commit          |
-
-## Deploy
-
-| Platform                       | Guide                                  | Notes                                      |
-| ------------------------------ | -------------------------------------- | ------------------------------------------ |
-| Redis shared stores            | [Setup guide](docs/deploy/redis.md)    | Multi-instance consistency + restart-safe  |
-| [Fly.io](https://fly.io)       | [Deploy guide](https://docs.tollbooth.sh/deploy/fly-io)  | `fly.toml` template, scale-to-zero support |
-| [Railway](https://railway.com) | [Deploy guide](https://docs.tollbooth.sh/deploy/railway) | Docker-based, auto-deploy from GitHub      |
-
-All guides use the published Docker image (`ghcr.io/loa212/x402-tollbooth`). You can also deploy on any platform that runs Docker containers.
-
-## Local Development
-
-Try tollbooth locally with a dummy API — no wallets or real payments needed.
-
-### 1. Install dependencies
-
-```bash
-bun install
-```
-
-### 2. Start the dummy upstream API
-
-```bash
-bun run examples/dummy-api.ts
-```
-
-This starts a fake API on `http://localhost:4000` with three endpoints:
-
-- `GET /weather` → returns weather data
-- `POST /chat` → echoes back the model name (for testing body-match pricing)
-- `GET /data/:id` → returns mock query results
-
-### 3. Start tollbooth
-
-In a second terminal:
-
-```bash
-bun run src/cli.ts -- --config=examples/tollbooth.config.dev.yaml
-```
-
-Tollbooth starts on `http://localhost:3000` and proxies to the dummy API with x402 payment requirements.
-
-### 4. Test the 402 flow
-
-In a third terminal:
-
-```bash
-bun run examples/test-client.ts
-```
-
-This fires requests at tollbooth and prints the 402 responses. You should see different prices depending on the route:
-
-| Request                            | Price          | Why                             |
-| ---------------------------------- | -------------- | ------------------------------- |
-| `GET /weather`                     | $0.01 (10000)  | Static price                    |
-| `POST /chat` body `model: "haiku"` | $0.005 (5000)  | Body-match rule                 |
-| `POST /chat` body `model: "opus"`  | $0.075 (75000) | Body-match rule                 |
-| `GET /data/12345`                  | $0.05 (50000)  | Param extraction + static price |
-| `GET /.well-known/x402`            | 200            | V2 discovery metadata           |
-| `GET /health`                      | 200            | Health check                    |
-
-Since no real wallet is signing payments, every request gets a 402 back with the `PAYMENT-REQUIRED` header — which is exactly what we want to verify.
-
-## End-to-End Test with Real Payments
-
-Run a full payment cycle on Base Sepolia testnet: `GET /weather` → 402 → sign → pay → 200 with tx hash.
-
-### 1. Set up two wallets
-
-You need two separate Ethereum wallets:
-
-- **Payer wallet** — the "buyer" that signs and pays for requests. Must hold testnet USDC.
-- **Gateway wallet** — the "seller" that receives USDC. Can be any address (no funds needed).
-
-The simplest way to create a dedicated test wallet for each:
-
-```bash
-# Using cast (install Foundry: https://getfoundry.sh)
-cast wallet new   # run twice, use one as payer and one as gateway
-```
-
-Or export keys from MetaMask, Coinbase Wallet, etc.
-
-### 2. Configure your env file
-
-Copy the example and fill in your values:
-
-```bash
-cp .env.test.example .env.test
-```
-
-```bash
-# .env.test
-
-# Payer wallet (the "buyer") — needs testnet USDC
-TEST_PRIVATE_KEY=0x...          # private key of the payer wallet
-TEST_WALLET_ADDRESS=0x...       # public address of the payer wallet
-
-# Gateway wallet (the "seller") — receives USDC payments
-TEST_GATEWAY_ADDRESS=0x...      # must be a different address from TEST_WALLET_ADDRESS
-```
-
-> **Never commit `.env.test`** — it contains your private key. It's already in `.gitignore`.
-
-### 3. Get testnet USDC
-
-The payer wallet needs USDC on Base Sepolia. The x402 facilitator sponsors gas, so you only need USDC — no ETH required.
-
-1. Go to the [Circle USDC Faucet](https://faucet.circle.com)
-2. Select **Base Sepolia** as the network
-3. Paste your **payer** wallet address (`TEST_WALLET_ADDRESS`) and request USDC
-
-You'll receive testnet USDC at `0x036CbD53842c5426634e7929541eC2318f3dCF7e`.
-
-### 4. Run the test
-
-```bash
-bun install   # installs viem and other deps
-```
-
-Open three terminals:
-
-**Terminal 1 — dummy upstream:**
-
-```bash
-bun run examples/dummy-api.ts
-```
-
-**Terminal 2 — tollbooth gateway:**
-
-```bash
-bun run --env-file=.env.test src/cli.ts start --config=examples/tollbooth.config.e2e.yaml
-```
-
-**Terminal 3 — e2e test:**
-
-```bash
-bun run --env-file=.env.test examples/e2e-payment.ts
-```
-
-### Expected output
-
-```
-🔑 Payer wallet:   0xYourPayerAddress
-   Network:        Base Sepolia (chain 84532)
-   USDC contract:  0x036CbD53842c5426634e7929541eC2318f3dCF7e
-   Gateway:        http://localhost:3000
-
-── Step 1: GET /weather (expect 402) ──
-✓ Got 402 with payment requirements:
-  scheme:             exact
-  network:            base-sepolia
-  asset:              0x036CbD53842c5426634e7929541eC2318f3dCF7e
-  maxAmountRequired:  1000 (0.001 USDC)
-  payTo:              0xYourGatewayAddress
-  maxTimeoutSeconds:  300
-
-── Step 2: Sign EIP-3009 transferWithAuthorization ──
-✓ Payment signed:
-  from:         0xYourPayerAddress
-  to:           0xYourGatewayAddress
-  value:        1000 (0.001 USDC)
-  ...
-
-── Step 3: Resend GET /weather + payment-signature (expect 200) ──
-Status: 200
-
-── Step 4: Verify payment-response header ──
-
-✅ E2E test passed!
-──────────────────────────────────────────────────────────────
-  Tx hash:  0xabc123...
-  Network:  base-sepolia
-  Payer:    0xYourPayerAddress
-  Amount:   1000 raw units
-──────────────────────────────────────────────────────────────
-
-🔗 View on Basescan: https://sepolia.basescan.org/tx/0xabc123...
-```
-
-### How signing works
-
-The x402 `exact` scheme uses EIP-3009 `transferWithAuthorization` — a signed permit for USDC that lets the facilitator pull payment from the payer's wallet without the payer broadcasting a transaction. The flow:
-
-1. Tollbooth returns a 402 with the `payment-required` header (base64-encoded requirements)
-2. The client signs a `TransferWithAuthorization` EIP-712 typed-data message
-3. The signed payload is sent back in the `payment-signature` header
-4. Tollbooth forwards it to `https://x402.org/facilitator`, which verifies the signature and settles the on-chain transfer
-5. Tollbooth proxies to the upstream and returns 200 with a `payment-response` header containing the tx hash
+Available tags: `latest`, `0.5.0` / `0.5`, or a specific commit SHA.
 
 ## Features
 
 - **YAML-first config** — define upstreams, routes, and pricing without code
-- **Token-based mode** — auto-detect model from request body, built-in pricing table
-- **Dynamic pricing** — match on body fields, query params, headers with glob patterns
-- **Time-based access windows** — pay once, access a route until expiry
+- **Dynamic pricing** — match on body, query, headers with glob patterns; or use custom functions
+- **Token-based mode** — auto-detect model from request body, built-in pricing table for LLM APIs
+- **Time-based access** — pay once, access until expiry
 - **Multiple upstreams** — proxy to different APIs from one gateway
-- **Custom pricing functions** — `fn:` escape hatch for complex pricing logic
 - **Lifecycle hooks** — `onRequest`, `onPriceResolved`, `onSettled`, `onResponse`, `onError`
 - **x402 V2** — modern headers, auto-discovery at `/.well-known/x402`
-- **Multi-chain** — accept payments on Base, Solana, or any supported network
-- **Browser-ready CORS** — configurable origins/methods/headers with strict defaults
-- **Path rewriting** — your public API shape doesn't need to match upstream
+- **Multi-chain** — Base, Solana, or any supported network
+- **Pluggable settlement** — default facilitator, self-hosted, or fully custom
+- **Streaming/SSE** — pass-through without buffering
+- **OpenAPI import/export** — auto-generate routes from a spec
+- **Prometheus metrics** — request, payment, and upstream counters/histograms
 - **Env var interpolation** — `${API_KEY}` in config, secrets stay in `.env`
-- **Custom facilitator** — point to a self-hosted or alternative facilitator
-- **Pluggable settlement** — swap the default facilitator for a custom settlement backend
 
-## Prometheus Metrics
+## CLI
 
-Enable an optional Prometheus endpoint:
-
-```yaml
-gateway:
-  metrics:
-    enabled: true
-    path: /metrics # default
+```bash
+tollbooth init                          # generate config interactively
+tollbooth init --from openapi spec.yaml # generate from OpenAPI spec
+tollbooth start [--config=path]         # start the gateway
+tollbooth dev [--config=path]           # dev mode with file watching
+tollbooth validate [--config=path]      # validate config
 ```
-
-When enabled, tollbooth exposes counters and histograms such as:
-
-- `tollbooth_requests_total{route,method,status}`
-- `tollbooth_payments_total{route,outcome}`
-- `tollbooth_settlements_total{strategy,outcome}`
-- `tollbooth_request_duration_seconds{route,method}`
-
-Basic Prometheus scrape config:
-
-```yaml
-scrape_configs:
-  - job_name: tollbooth
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["localhost:3000"]
-```
-
-Example queries:
-
-- p95 latency per route:
-  `histogram_quantile(0.95, sum by (le, route, method) (rate(tollbooth_request_duration_seconds_bucket[5m])))`
-- 402 rate:
-  `sum(rate(tollbooth_requests_total{status="402"}[5m])) / sum(rate(tollbooth_requests_total[5m]))`
-
-## Proxy Deployments (`trustProxy`)
-
-By default, tollbooth **does not trust forwarded headers**. This is the safe default.
-
-If you run behind nginx, Cloudflare, or a load balancer, explicitly configure `gateway.trustProxy` so client IP resolution (rate limiting + logs) uses the real caller IP.
-
-```yaml
-gateway:
-  port: 3000
-  discovery: true
-  trustProxy: false # default (safe)
-```
-
-Supported values:
-
-- `true` — trust all forwarded hops (simple setups only)
-- `1`, `2`, ... — trust a fixed number of proxy hops
-- `{ hops, cidrs }` — trust only known proxy ranges (recommended for production)
-
-Example (recommended):
-
-```yaml
-gateway:
-  trustProxy:
-    hops: 2
-    cidrs:
-      - "10.0.0.0/8"
-      - "173.245.48.0/20" # Cloudflare IPv4 example
-```
-
-### nginx example
-
-```nginx
-location / {
-  proxy_set_header Host $host;
-  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-  proxy_set_header X-Forwarded-Proto $scheme;
-  proxy_set_header X-Real-IP $remote_addr;
-  proxy_pass http://127.0.0.1:3000;
-}
-```
-
-### Cloudflare + nginx (recommended)
-
-Only trust Cloudflare edges as proxy sources before passing headers to tollbooth:
-
-```nginx
-# Keep this list in sync with Cloudflare's published IP ranges.
-set_real_ip_from 173.245.48.0/20;
-set_real_ip_from 103.21.244.0/22;
-real_ip_header CF-Connecting-IP;
-real_ip_recursive on;
-```
-
-Then set tollbooth `gateway.trustProxy` with matching `cidrs`.
-
-Warning: never enable `trustProxy` broadly on a public listener unless traffic is guaranteed to come through trusted proxies.
-
-## Custom Facilitator
-
-By default, tollbooth uses `https://x402.org/facilitator`. You can override this globally or per-route:
-
-```yaml
-# Use a custom facilitator for all routes
-facilitator: https://custom-facilitator.example.com
-
-upstreams:
-  myapi:
-    url: https://api.example.com
-
-routes:
-  "GET /data":
-    upstream: myapi
-    price: "$0.01"
-
-  "POST /special":
-    upstream: myapi
-    price: "$0.05"
-    facilitator: https://other-facilitator.example.com # per-route override
-```
-
-Route-level `facilitator` takes precedence over the top-level setting. If neither is specified, the default `https://x402.org/facilitator` is used.
-
-## Settlement Strategy
-
-Settlement is pluggable. By default tollbooth uses an x402 facilitator to verify and settle payments, but you can point it at a self-hosted facilitator or provide a completely custom settlement module.
-
-### Facilitator (default)
-
-```yaml
-# Explicit facilitator URL (equivalent to the top-level facilitator field)
-settlement:
-  strategy: facilitator
-  url: "https://x402.org/facilitator"
-```
-
-`settlement.url` takes precedence over the legacy `facilitator` field. Route-level `facilitator` overrides still apply.
-
-### Custom module
-
-Write your own settlement backend by implementing the `SettlementStrategy` interface:
-
-```yaml
-settlement:
-  strategy: custom
-  module: "./settlement/my-strategy.ts"
-```
-
-```ts
-// settlement/my-strategy.ts
-import type { SettlementStrategy } from "x402-tollbooth";
-
-const strategy: SettlementStrategy = {
-  async verify(payment, requirements) {
-    // Verify the payment payload against the requirements.
-    // Return a SettlementVerification with at least { payer }.
-    // Throw PaymentError to reject.
-    return { payer: "0x..." };
-  },
-
-  async settle(verification) {
-    // Execute the payment. Called after verify() succeeds.
-    // Return SettlementInfo with payer, amount, transaction, network.
-    return {
-      payer: verification.payer!,
-      amount: "10000",
-      transaction: "0x...",
-      network: "base",
-    };
-  },
-};
-
-export default strategy;
-```
-
-The `verify` → `settle` split lets tollbooth call them at different times depending on the route's `settlement` timing (`before-response` or `after-response`). Your strategy works with both modes automatically.
-
-## Token-Based Routes
-
-For proxying token-based LLM APIs (OpenAI, Anthropic, Google, OpenRouter, LiteLLM, Ollama, etc.), use `type: token-based` to get automatic model-based pricing without writing match rules:
-
-> `type: openai-compatible` still works as a deprecated alias.
-
-```yaml
-upstreams:
-  openai:
-    url: "https://api.openai.com"
-    headers:
-      authorization: "Bearer ${OPENAI_API_KEY}"
-
-routes:
-  "POST /v1/chat/completions":
-    upstream: openai
-    type: token-based
-
-  "POST /v1/completions":
-    upstream: openai
-    type: token-based
-```
-
-The gateway auto-extracts the `model` field from the JSON request body and prices the request from a built-in table of common models (GPT-4o, Claude, Gemini, Llama, Mistral, DeepSeek, etc.).
-
-### Override or extend model pricing
-
-Add a `models` map to set custom prices or add models not in the default table:
-
-```yaml
-routes:
-  "POST /v1/chat/completions":
-    upstream: openai
-    type: token-based
-    models:
-      gpt-4o: "$0.05" # override default
-      gpt-4o-mini: "$0.005" # override default
-      my-fine-tune: "$0.02" # custom model
-    fallback: "$0.01" # price for models not in any table
-```
-
-**Price resolution order:**
-
-1. `models` (your overrides) — exact match
-2. Built-in default table — exact match
-3. `price` / `fallback` / `defaults.price` — standard fallback chain
-
-Streaming responses (SSE) work out of the box — the gateway preserves the `ReadableStream` without buffering.
-
-## Dynamic Pricing
-
-Match on request content for per-model, per-param pricing:
-
-```yaml
-routes:
-  "POST /ai/claude":
-    upstream: anthropic
-    path: "/v1/messages"
-    match:
-      - where: { body.model: "claude-haiku-*" }
-        price: "$0.005"
-      - where: { body.model: "claude-sonnet-*" }
-        price: "$0.015"
-      - where: { body.model: "claude-opus-*" }
-        price: "$0.075"
-    fallback: "$0.015"
-```
-
-Rules evaluate top-to-bottom. First match wins. `where` supports `body.*`, `query.*`, `headers.*`, and `params.*` with glob matching.
-
-For complex pricing, use a function:
-
-```yaml
-routes:
-  "POST /ai/completions":
-    upstream: anthropic
-    price:
-      fn: "pricing/completions.ts"
-```
-
-```ts
-// pricing/completions.ts
-import type { PricingFn } from "x402-tollbooth";
-
-const pricingFn: PricingFn = ({ body }) => {
-  const model = (body as any)?.model ?? "claude-sonnet";
-  const maxTokens = (body as any)?.max_tokens ?? 1024;
-  const rate = model.includes("opus") ? 0.015 : 0.003;
-  return rate * Math.ceil(maxTokens / 1000);
-};
-
-export default pricingFn;
-```
-
-## Time-Based Pricing
-
-For pay-once access windows, set `pricing.model: time` and `pricing.duration`.
-After a successful payment, that payer can call the same route again without another payment until the window expires.
-
-```yaml
-routes:
-  "GET /feed/realtime":
-    upstream: datafeed
-    pricing:
-      model: time
-      price: "$0.10"
-      duration: 1h
-
-  "POST /v1/chat":
-    upstream: llm
-    pricing:
-      model: request # default behavior
-      price: "$0.02"
-```
-
-Supported durations: `s`, `m`, `h`, `d` (for example `30m`, `1h`, `24h`).
-
-## Shared Stores (Redis)
-
-By default, tollbooth keeps rate limits, time sessions, and verification cache in memory.
-
-- `memory` is fine for a single instance.
-- `redis` is recommended for multi-instance or restart-safe deployments.
-
-Use the `stores` block to enable Redis per store:
-
-```yaml
-stores:
-  redis:
-    url: "redis://localhost:6379"
-    prefix: "tollbooth-prod"
-    options:
-      connectionTimeout: 5000
-      autoReconnect: true
-
-  rateLimit:
-    backend: redis
-
-  verificationCache:
-    backend: redis
-
-  timeSession:
-    backend: redis
-```
-
-You can override Redis connection details for one store:
-
-```yaml
-stores:
-  redis:
-    url: "redis://shared-cache:6379"
-    prefix: "tollbooth"
-
-  verificationCache:
-    backend: redis
-    redis:
-      url: "redis://verification-cache:6379"
-      prefix: "tollbooth-vc"
-```
-
-### docker-compose example
-
-```yaml
-services:
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-  tollbooth:
-    image: ghcr.io/loa212/x402-tollbooth:latest
-    depends_on:
-      - redis
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./tollbooth.config.yaml:/app/tollbooth.config.yaml:ro
-```
-
-## Multiple Upstreams
-
-Proxy to different APIs from a single gateway:
-
-```yaml
-upstreams:
-  anthropic:
-    url: "https://api.anthropic.com"
-    headers:
-      x-api-key: "${ANTHROPIC_API_KEY}"
-      anthropic-version: "2023-06-01"
-
-  openai:
-    url: "https://api.openai.com"
-    headers:
-      authorization: "Bearer ${OPENAI_API_KEY}"
-
-  dune:
-    url: "https://api.dune.com/api"
-    headers:
-      x-dune-api-key: "${DUNE_API_KEY}"
-
-routes:
-  "POST /ai/claude":
-    upstream: anthropic
-    path: "/v1/messages"
-    price: "$0.015"
-
-  "POST /ai/gpt":
-    upstream: openai
-    path: "/v1/chat/completions"
-    price: "$0.01"
-
-  "GET /data/dune/:query_id":
-    upstream: dune
-    path: "/v1/query/${params.query_id}/results"
-    price: "$0.05"
-```
-
-Agents hit one gateway, pay with USDC, and get routed to the right upstream. No API keys needed on the caller side.
-
-## CORS (Browser Clients)
-
-To allow browser apps or paywall UIs to call tollbooth endpoints, configure CORS under `gateway.cors`.
-
-### Single origin
-
-```yaml
-gateway:
-  port: 3000
-  discovery: true
-  cors:
-    allowedOrigins:
-      - "https://app.example.com"
-    allowedMethods: ["GET", "POST"]
-    allowedHeaders: ["content-type", "payment-signature"]
-    exposedHeaders: ["payment-required", "payment-response"]
-    credentials: true
-    maxAge: 600
-```
-
-### Multiple origins
-
-```yaml
-gateway:
-  cors:
-    allowedOrigins:
-      - "https://app.example.com"
-      - "https://admin.example.com"
-    allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]
-    allowedHeaders: ["content-type", "payment-signature", "authorization"]
-    exposedHeaders: ["payment-required", "payment-response"]
-```
-
-Notes:
-
-- `allowedOrigins` is required and strict by default. No wildcard origin is used unless you explicitly set `"*"`.
-- Preflight `OPTIONS` is handled for proxied routes, `/.well-known/x402`, `/.well-known/openapi.json` (when enabled), and `/health`.
-- To read x402 headers from browser code, include `payment-required` / `payment-response` in `exposedHeaders`.
-
-## Hooks
-
-Hook into the request lifecycle for logging, analytics, or custom logic:
-
-```yaml
-hooks:
-  onRequest: "hooks/on-request.ts"
-  onSettled: "hooks/log-payment.ts"
-  onError: "hooks/handle-error.ts"
-
-routes:
-  "POST /ai/claude":
-    upstream: anthropic
-    hooks:
-      onResponse: "hooks/track-usage.ts" # per-route override
-```
-
-Available hooks:
-
-| Hook              | When                      | Use case                        |
-| ----------------- | ------------------------- | ------------------------------- |
-| `onRequest`       | Before anything           | Block abusers, rate limit       |
-| `onPriceResolved` | After price is calculated | Override or log pricing         |
-| `onSettled`       | After payment confirmed   | Log payments to DB              |
-| `onResponse`      | After upstream responds   | Transform response, track usage |
-| `onError`         | When upstream fails       | Trigger refunds                 |
 
 ## Programmatic API
 
@@ -756,45 +117,16 @@ const gateway = createGateway(config);
 await gateway.start();
 ```
 
-## CLI
+## Deploy
 
-```bash
-tollbooth start [--config=path]     # start the gateway
-tollbooth dev [--config=path]       # start in dev mode
-tollbooth validate [--config=path]  # validate config
-```
+| Platform | Guide |
+| --- | --- |
+| VPS + Nginx | [Production guide](https://docs.tollbooth.sh/deploy/production) |
+| Fly.io | [Deploy guide](https://docs.tollbooth.sh/deploy/fly-io) |
+| Railway | [Deploy guide](https://docs.tollbooth.sh/deploy/railway) |
+| Any Docker host | Mount your config and run the image |
 
-## How It Works
-
-```
-Client                    Tollbooth                  Upstream API
-  │                          │                           │
-  │  GET /weather            │                           │
-  │─────────────────────────>│                           │
-  │                          │  (match route, resolve    │
-  │                          │   price: $0.01)           │
-  │  402 + PAYMENT-REQUIRED  │                           │
-  │<─────────────────────────│                           │
-  │                          │                           │
-  │  (sign USDC payment)     │                           │
-  │                          │                           │
-  │  GET /weather            │                           │
-  │  + PAYMENT-SIGNATURE     │                           │
-  │─────────────────────────>│                           │
-  │                          │  verify + settle          │
-  │                          │  (via facilitator)        │
-  │                          │                           │
-  │                          │  GET /weather             │
-  │                          │──────────────────────────>│
-  │                          │                           │
-  │                          │  { temp: 22, city: ... }  │
-  │                          │<──────────────────────────│
-  │  200 + data              │                           │
-  │  + PAYMENT-RESPONSE      │                           │
-  │<─────────────────────────│                           │
-```
-
-## Project Structure
+## Project structure
 
 ```
 src/
@@ -807,7 +139,6 @@ src/
 ├── proxy/           # Upstream forwarding, lazy body buffering
 ├── hooks/           # Lifecycle hook loading and execution
 ├── discovery/       # V2 auto-discovery metadata
-├── __tests__/       # Unit tests
 ├── gateway.ts       # Main server (Bun.serve)
 ├── cli.ts           # CLI entry point
 ├── index.ts         # Public exports
