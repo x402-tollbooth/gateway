@@ -1,21 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
+import { serve, mockFacilitator } from "./helpers/test-server.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
-
-function mockFacilitator(options: {
-	verify: (req: Request) => Response | Promise<Response>;
-	settle: (req: Request) => Response | Promise<Response>;
-}): ReturnType<typeof Bun.serve> {
-	return Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname === "/verify") return options.verify(req);
-			if (url.pathname === "/settle") return options.settle(req);
-			return new Response("Not found", { status: 404 });
-		},
-	});
-}
 
 function makeConfig(
 	upstreamPort: number,
@@ -98,8 +84,8 @@ const paymentSig = btoa(
 );
 
 describe("prometheus metrics endpoint", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
+	let facilitator: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -109,11 +95,11 @@ describe("prometheus metrics endpoint", () => {
 	});
 
 	test("emits counters and histograms for success, missing payment, cache, and rate limits", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xTestPayer" }),
 			settle: () =>
 				Response.json({
@@ -234,11 +220,11 @@ describe("prometheus metrics endpoint", () => {
 	});
 
 	test("increments settlement failure metric when settlement fails", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xTestPayer" }),
 			settle: () =>
 				Response.json({

@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
+import { serve } from "./helpers/test-server.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
 
@@ -31,7 +32,7 @@ function makeConfig(upstreamPort: number): TollboothConfig {
 }
 
 describe("gateway CORS", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 	const allowedOrigin = "https://app.example.com";
 
@@ -41,7 +42,7 @@ describe("gateway CORS", () => {
 	});
 
 	test("applies CORS headers to proxied and built-in endpoints", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port));
 		await gateway.start({ silent: true });
 
@@ -84,7 +85,7 @@ describe("gateway CORS", () => {
 	});
 
 	test("handles preflight OPTIONS for paywalled and gateway endpoints", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port));
 		await gateway.start({ silent: true });
 
@@ -119,7 +120,7 @@ describe("gateway CORS", () => {
 	});
 
 	test("rejects preflight when requested headers are not allowed", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port));
 		await gateway.start({ silent: true });
 
@@ -137,7 +138,7 @@ describe("gateway CORS", () => {
 	});
 
 	test("does not set CORS headers for disallowed origins", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port));
 		await gateway.start({ silent: true });
 

@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { extractModel, resolveOpenAIPrice } from "../openai/handler.js";
 import { DEFAULT_MODEL_PRICES } from "../pricing/models.js";
 import { routeNeedsBody } from "../proxy/body-buffer.js";
+import { tollboothConfigSchema } from "../config/schema.js";
 import type { RouteConfig, TollboothConfig } from "../types.js";
 
 // ── extractModel ─────────────────────────────────────────────────────────────
@@ -201,7 +202,6 @@ describe("routeNeedsBody for token-based", () => {
 // ── Schema validation ────────────────────────────────────────────────────────
 
 describe("config schema with token-based route", () => {
-	const { tollboothConfigSchema } = require("../config/schema.js");
 
 	const validConfig = {
 		wallets: { base: "0xtest" },

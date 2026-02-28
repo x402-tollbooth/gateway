@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
 	checkRateLimit,
 	extractIdentity,
@@ -6,6 +6,7 @@ import {
 } from "../ratelimit/check.js";
 import { RedisRateLimitStore } from "../ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "../ratelimit/store.js";
+import { tollboothConfigSchema } from "../config/schema.js";
 import type { RateLimitConfig, TollboothConfig } from "../types.js";
 import { MockRedisClient } from "./helpers/mock-redis.js";
 
@@ -88,7 +89,7 @@ describe("MemoryRateLimitStore", () => {
 		// Use a very short window
 		await store.check("key1", 1, 1);
 		// Wait for window to expire
-		await Bun.sleep(5);
+		await new Promise((r) => setTimeout(r, 5));
 		const result = await store.check("key1", 1, 1);
 		expect(result.allowed).toBe(true);
 	});
@@ -122,7 +123,7 @@ describe("RedisRateLimitStore", () => {
 
 	test("expires counters after the window", async () => {
 		await storeA.check("key1", 1, 10);
-		await Bun.sleep(20);
+		await new Promise((r) => setTimeout(r, 20));
 
 		const result = await storeB.check("key1", 1, 10);
 		expect(result.allowed).toBe(true);
@@ -274,7 +275,6 @@ describe("checkRateLimit", () => {
 // ── Config schema validation ─────────────────────────────────────────────────
 
 describe("rateLimit config schema", () => {
-	const { tollboothConfigSchema } = require("../config/schema.js");
 
 	const validConfig = {
 		wallets: { base: "0xtest" },

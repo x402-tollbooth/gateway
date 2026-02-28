@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
+import { serve } from "./helpers/test-server.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
 
@@ -25,7 +26,7 @@ function makeConfig(upstreamPort: number): TollboothConfig {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("zero-price routes bypass payment middleware", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -34,7 +35,7 @@ describe("zero-price routes bypass payment middleware", () => {
 	});
 
 	test("price: '$0' proxies without requiring payment", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => new Response("welcome"),
 		});
@@ -47,7 +48,7 @@ describe("zero-price routes bypass payment middleware", () => {
 	});
 
 	test("price: '0' (raw zero) proxies without requiring payment", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => new Response("also free"),
 		});
@@ -60,7 +61,7 @@ describe("zero-price routes bypass payment middleware", () => {
 	});
 
 	test("paid route still returns 402 without payment", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => new Response("content"),
 		});
@@ -72,7 +73,7 @@ describe("zero-price routes bypass payment middleware", () => {
 	});
 
 	test("route without price inherits defaults.price and returns 402", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => new Response("content"),
 		});
@@ -85,7 +86,7 @@ describe("zero-price routes bypass payment middleware", () => {
 
 	test("zero-price POST route proxies body correctly", async () => {
 		let receivedBody = "";
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: async (req) => {
 				receivedBody = await req.text();

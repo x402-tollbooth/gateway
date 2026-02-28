@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { tollboothConfigSchema } from "../config/schema.js";
 import { generateDiscoveryMetadata } from "../discovery/metadata.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
 import { resolveFacilitatorUrl } from "../x402/facilitator.js";
+import { serve, mockFacilitator, type TestServer } from "./helpers/test-server.js";
 
 // ── resolveFacilitatorUrl ──────────────────────────────────────────────────
 
@@ -372,21 +373,6 @@ describe("multi-facilitator discovery metadata", () => {
 
 // ── Gateway integration: multi-facilitator payment flow ─────────────────────
 
-function mockFacilitator(options: {
-	verify: (req: Request) => Response | Promise<Response>;
-	settle: (req: Request) => Response | Promise<Response>;
-}): ReturnType<typeof Bun.serve> {
-	return Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname === "/verify") return options.verify(req);
-			if (url.pathname === "/settle") return options.settle(req);
-			return new Response("Not found", { status: 404 });
-		},
-	});
-}
-
 function alwaysApprove(network: string) {
 	return mockFacilitator({
 		verify: () => Response.json({ isValid: true, payer: "0xabc" }),
@@ -409,9 +395,9 @@ function alwaysReject() {
 }
 
 describe("multi-facilitator gateway integration", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let facilitator1: ReturnType<typeof Bun.serve>;
-	let facilitator2: ReturnType<typeof Bun.serve>;
+	let upstream: TestServer;
+	let facilitator1: TestServer;
+	let facilitator2: TestServer;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -424,14 +410,14 @@ describe("multi-facilitator gateway integration", () => {
 	const paymentSig = btoa(JSON.stringify({ x402Version: 2, payload: "mock" }));
 
 	test("payment succeeds when second facilitator verifies", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
 		// First facilitator rejects, second accepts
-		facilitator1 = alwaysReject();
-		facilitator2 = alwaysApprove("solana");
+		facilitator1 = await alwaysReject();
+		facilitator2 = await alwaysApprove("solana");
 
 		const config: TollboothConfig = {
 			gateway: { port: 0, discovery: false },
@@ -463,13 +449,13 @@ describe("multi-facilitator gateway integration", () => {
 	});
 
 	test("payment fails when all facilitators reject", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator1 = alwaysReject();
-		facilitator2 = alwaysReject();
+		facilitator1 = await alwaysReject();
+		facilitator2 = await alwaysReject();
 
 		const config: TollboothConfig = {
 			gateway: { port: 0, discovery: false },
@@ -500,13 +486,13 @@ describe("multi-facilitator gateway integration", () => {
 	});
 
 	test("settlement failure does not try next facilitator", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
 		// Verifies OK but settlement fails
-		facilitator1 = mockFacilitator({
+		facilitator1 = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
 			settle: () =>
 				Response.json({
@@ -515,7 +501,7 @@ describe("multi-facilitator gateway integration", () => {
 				}),
 		});
 		// Would succeed — but should never be reached
-		facilitator2 = alwaysApprove("solana");
+		facilitator2 = await alwaysApprove("solana");
 
 		const config: TollboothConfig = {
 			gateway: { port: 0, discovery: false },
@@ -547,12 +533,12 @@ describe("multi-facilitator gateway integration", () => {
 	});
 
 	test("single facilitator still works (backward compat)", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator1 = alwaysApprove("base-sepolia");
+		facilitator1 = await alwaysApprove("base-sepolia");
 
 		const config: TollboothConfig = {
 			gateway: { port: 0, discovery: false },
@@ -576,12 +562,12 @@ describe("multi-facilitator gateway integration", () => {
 	});
 
 	test("no payment header returns 402 with per-chain facilitators in discovery", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator1 = alwaysApprove("base");
+		facilitator1 = await alwaysApprove("base");
 
 		const config: TollboothConfig = {
 			gateway: { port: 0, discovery: true },
