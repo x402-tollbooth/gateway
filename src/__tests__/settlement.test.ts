@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-import { serve, mockFacilitator } from "./helpers/test-server.js";
+
+import { tollboothConfigSchema } from "../config/schema.js";
 import { createGateway } from "../gateway.js";
 import { FacilitatorSettlement } from "../settlement/facilitator.js";
 import {
@@ -16,8 +17,8 @@ import type {
 	TollboothConfig,
 	TollboothGateway,
 } from "../types.js";
-import { tollboothConfigSchema } from "../config/schema.js";
 import { PaymentError } from "../x402/middleware.js";
+import { mockFacilitator, serve } from "./helpers/test-server.js";
 
 const paymentSig = btoa(JSON.stringify({ x402Version: 2, payload: "mock" }));
 
@@ -643,7 +644,6 @@ describe("settlement strategy config", () => {
 // ── Config schema validation ────────────────────────────────────────────────
 
 describe("settlement config schema", () => {
-
 	const baseInput = {
 		wallets: { base: "0xtest" },
 		accepts: [{ asset: "USDC", network: "base" }],

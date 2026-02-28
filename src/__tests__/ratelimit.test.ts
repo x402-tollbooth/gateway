@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { tollboothConfigSchema } from "../config/schema.js";
 import {
 	checkRateLimit,
 	extractIdentity,
@@ -6,7 +7,6 @@ import {
 } from "../ratelimit/check.js";
 import { RedisRateLimitStore } from "../ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "../ratelimit/store.js";
-import { tollboothConfigSchema } from "../config/schema.js";
 import type { RateLimitConfig, TollboothConfig } from "../types.js";
 import { MockRedisClient } from "./helpers/mock-redis.js";
 
@@ -275,7 +275,6 @@ describe("checkRateLimit", () => {
 // ── Config schema validation ─────────────────────────────────────────────────
 
 describe("rateLimit config schema", () => {
-
 	const validConfig = {
 		wallets: { base: "0xtest" },
 		accepts: [{ asset: "USDC", network: "base" }],

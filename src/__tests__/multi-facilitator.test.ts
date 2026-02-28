@@ -4,7 +4,11 @@ import { generateDiscoveryMetadata } from "../discovery/metadata.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
 import { resolveFacilitatorUrl } from "../x402/facilitator.js";
-import { serve, mockFacilitator, type TestServer } from "./helpers/test-server.js";
+import {
+	mockFacilitator,
+	serve,
+	type TestServer,
+} from "./helpers/test-server.js";
 
 // ── resolveFacilitatorUrl ──────────────────────────────────────────────────
 

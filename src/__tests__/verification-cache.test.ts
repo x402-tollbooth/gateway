@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { tollboothConfigSchema } from "../config/schema.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
 import { RedisVerificationCacheStore } from "../verification-cache/redis-store.js";
 import { MemoryVerificationCacheStore } from "../verification-cache/store.js";
-import { tollboothConfigSchema } from "../config/schema.js";
 import { MockRedisClient } from "./helpers/mock-redis.js";
-import { serve, mockFacilitator, type TestServer } from "./helpers/test-server.js";
+import {
+	mockFacilitator,
+	serve,
+	type TestServer,
+} from "./helpers/test-server.js";
 
 // ── MemoryVerificationCacheStore ────────────────────────────────────────────
 
@@ -351,7 +355,6 @@ describe("verification cache", () => {
 // ── Config schema validation ────────────────────────────────────────────────
 
 describe("verificationCache config schema", () => {
-
 	const validConfig = {
 		wallets: { base: "0xtest" },
 		accepts: [{ asset: "USDC", network: "base" }],

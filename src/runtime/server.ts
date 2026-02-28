@@ -1,7 +1,7 @@
 import {
+	createServer as createHttpServer,
 	type IncomingMessage,
 	type ServerResponse,
-	createServer as createHttpServer,
 } from "node:http";
 import type { AddressInfo } from "node:net";
 import { Readable } from "node:stream";
@@ -36,7 +36,7 @@ export function createPortableServer(
 				const remoteAddress = req.socket.remoteAddress;
 				const response = await options.fetch(request, { remoteAddress });
 				await writeResponse(response, res);
-			} catch (err) {
+			} catch {
 				if (!res.headersSent) {
 					res.writeHead(500);
 				}
@@ -58,7 +58,10 @@ export function createPortableServer(
 	});
 }
 
-function toRequest(req: IncomingMessage, server: ReturnType<typeof createHttpServer>): Request {
+function toRequest(
+	req: IncomingMessage,
+	server: ReturnType<typeof createHttpServer>,
+): Request {
 	const addr = server.address() as AddressInfo;
 	const host = req.headers.host ?? `localhost:${addr.port}`;
 	const url = `http://${host}${req.url ?? "/"}`;

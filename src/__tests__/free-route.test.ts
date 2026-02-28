@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { serve } from "./helpers/test-server.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { serve } from "./helpers/test-server.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

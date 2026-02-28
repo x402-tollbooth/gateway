@@ -2,9 +2,9 @@ import { writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
-import { serve, mockFacilitator } from "./helpers/test-server.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { mockFacilitator, serve } from "./helpers/test-server.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

@@ -30,6 +30,8 @@ import { RedisRateLimitStore } from "./ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
 import { getMethodsForPath, matchRoute } from "./router/router.js";
+import type { PortableServer } from "./runtime/server.js";
+import { createPortableServer } from "./runtime/server.js";
 import { RedisTimeSessionStore } from "./session/redis-store.js";
 import {
 	buildSessionKey,
@@ -45,12 +47,6 @@ import {
 	buildRedisStorePrefix,
 	resolveRedisStoreConfig,
 } from "./store/resolve.js";
-import type {
-	PortableServer,
-} from "./runtime/server.js";
-import {
-	createPortableServer,
-} from "./runtime/server.js";
 import type {
 	CorsConfig,
 	PaymentRequirementsPayload,
@@ -1535,10 +1531,13 @@ function createTimeSessionStoreFromConfig(
 ): TimeSessionStore {
 	const redis = resolveRedisStoreConfig(config, "timeSession");
 	if (!redis) return new MemoryTimeSessionStore();
-	return new RedisTimeSessionStore(createRedisAdapter(redis.url, redis.options), {
-		prefix: buildRedisStorePrefix(redis.prefix, "timeSession"),
-		closeClient: true,
-	});
+	return new RedisTimeSessionStore(
+		createRedisAdapter(redis.url, redis.options),
+		{
+			prefix: buildRedisStorePrefix(redis.prefix, "timeSession"),
+			closeClient: true,
+		},
+	);
 }
 
 function destroyOrCloseStore(store: unknown): void {
