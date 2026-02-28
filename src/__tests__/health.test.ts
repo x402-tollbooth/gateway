@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { serve } from "./helpers/test-server.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -24,7 +25,7 @@ function makeConfig(
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("health and discovery bypass 402 gate", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -33,7 +34,7 @@ describe("health and discovery bypass 402 gate", () => {
 	});
 
 	test("GET /health returns 200 without payment header", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port));
 		await gateway.start({ silent: true });
 
@@ -45,7 +46,7 @@ describe("health and discovery bypass 402 gate", () => {
 	});
 
 	test("GET /.well-known/x402 returns 200 when discovery is enabled", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port, { discovery: true }));
 		await gateway.start({ silent: true });
 
@@ -59,7 +60,7 @@ describe("health and discovery bypass 402 gate", () => {
 	});
 
 	test("configured route returns 402 without payment header", async () => {
-		upstream = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+		upstream = await serve({ port: 0, fetch: () => new Response("ok") });
 		gateway = createGateway(makeConfig(upstream.port));
 		await gateway.start({ silent: true });
 

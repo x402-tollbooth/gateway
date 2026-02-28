@@ -15,42 +15,59 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
-      - run: bun install
+          node-version: '20'
+      - run: npm install
       - name: Format check
-        run: bun run check
+        run: npm run check
 
   typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
-      - run: bun install
+          node-version: '20'
+      - run: npm install
       - name: Type check
-        run: bun run type-check
+        run: npm run type-check
 
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v1
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
-      - run: bun install
+          node-version: '20'
+      - run: npm install
       - name: Build
-        run: bun run build
+        run: npm run build
 
-  test:
+  test-node:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ['20', '22']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - run: npm install
+      - name: Run tests (Node ${{ matrix.node-version }})
+        run: npm test
+
+  test-bun:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
-      - run: bun install
-      - name: Run tests
-        run: bun run test
+      - run: npm install
+      - name: Run tests (Bun)
+        run: bun vitest run

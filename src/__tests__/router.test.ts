@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { extractParams, rewritePath } from "../router/rewriter.js";
 import { getMethodsForPath, matchRoute } from "../router/router.js";
 import type { TollboothConfig } from "../types.js";

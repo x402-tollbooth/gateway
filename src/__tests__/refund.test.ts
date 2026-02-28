@@ -1,23 +1,14 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, test } from "vitest";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { mockFacilitator, serve } from "./helpers/test-server.js";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function mockFacilitator(options: {
-	verify: (req: Request) => Response | Promise<Response>;
-	settle: (req: Request) => Response | Promise<Response>;
-}): ReturnType<typeof Bun.serve> {
-	return Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname === "/verify") return options.verify(req);
-			if (url.pathname === "/settle") return options.settle(req);
-			return new Response("Not found", { status: 404 });
-		},
-	});
-}
 
 let settleCalled = false;
 
@@ -64,8 +55,8 @@ function makeConfig(
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("settlement strategy", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
+	let facilitator: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -78,11 +69,11 @@ describe("settlement strategy", () => {
 
 	describe("after-response mode", () => {
 		test("skips settlement on upstream 500", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Internal Server Error", { status: 500 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -104,11 +95,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("skips settlement on upstream 502", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Bad Gateway", { status: 502 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -127,11 +118,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("skips settlement on upstream 503", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Service Unavailable", { status: 503 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -152,11 +143,11 @@ describe("settlement strategy", () => {
 		// ── after-response: settle on success ───────────────────────────
 
 		test("settles on upstream 200", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => Response.json({ ok: true }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -178,11 +169,11 @@ describe("settlement strategy", () => {
 		// ── after-response: settle on 4xx (client errors) ───────────────
 
 		test("settles on upstream 400 (client error)", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Bad Request", { status: 400 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -201,11 +192,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("settles on upstream 404", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Not Found", { status: 404 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -223,11 +214,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("settles on upstream 422", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Unprocessable Entity", { status: 422 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -245,11 +236,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("settles on upstream 429 (rate limited by upstream)", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Too Many Requests", { status: 429 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {
@@ -270,7 +261,7 @@ describe("settlement strategy", () => {
 
 		test("skips settlement on upstream connection failure", async () => {
 			const deadUpstreamPort = 19999;
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			const config: TollboothConfig = {
 				gateway: { port: 0, discovery: false },
@@ -308,17 +299,17 @@ describe("settlement strategy", () => {
 		// ── after-response: onError hook receives settlementSkipped ──────
 
 		test("onError hook receives settlementSkipped context", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Internal Server Error", { status: 500 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
-			const hookPath = `${import.meta.dir}/_test_settlement_hook.ts`;
+			const hookPath = `${__dirname}/_test_settlement_hook.ts`;
 			const hookCalls: unknown[] = [];
 			(globalThis as Record<string, unknown>).__settlementHookCalls = hookCalls;
 
-			await Bun.write(
+			writeFileSync(
 				hookPath,
 				`export default async function(ctx) {
 					(globalThis as any).__settlementHookCalls.push({
@@ -371,14 +362,14 @@ describe("settlement strategy", () => {
 		// ── after-response: onResponse hook can override settlement ──────
 
 		test("onResponse hook can skip settlement on 200 with { settle: false }", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => Response.json({ ok: true }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
-			const hookPath = `${import.meta.dir}/_test_skip_settle_hook.ts`;
-			await Bun.write(
+			const hookPath = `${__dirname}/_test_skip_settle_hook.ts`;
+			writeFileSync(
 				hookPath,
 				`export default async function(ctx) {
 					return { settle: false, reason: "hook_override" };
@@ -423,14 +414,14 @@ describe("settlement strategy", () => {
 		});
 
 		test("onResponse hook can force settlement on 500 with { settle: true }", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Internal Server Error", { status: 500 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
-			const hookPath = `${import.meta.dir}/_test_force_settle_hook.ts`;
-			await Bun.write(
+			const hookPath = `${__dirname}/_test_force_settle_hook.ts`;
+			writeFileSync(
 				hookPath,
 				`export default async function(ctx) {
 					return { settle: true };
@@ -477,11 +468,11 @@ describe("settlement strategy", () => {
 
 	describe("before-response mode (default)", () => {
 		test("settles before proxy — upstream 500 still has payment-response header", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Internal Server Error", { status: 500 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(makeConfig(upstream.port, facilitator.port));
 			await gateway.start({ silent: true });
@@ -497,11 +488,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("settles before proxy — upstream 200 has payment-response header", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => Response.json({ ok: true }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(makeConfig(upstream.port, facilitator.port));
 			await gateway.start({ silent: true });
@@ -516,11 +507,11 @@ describe("settlement strategy", () => {
 		});
 
 		test("no x-tollbooth-settlement-skipped header on any status", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => new Response("Bad Gateway", { status: 502 }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(makeConfig(upstream.port, facilitator.port));
 			await gateway.start({ silent: true });
@@ -538,11 +529,11 @@ describe("settlement strategy", () => {
 
 	describe("common", () => {
 		test("returns 402 when no payment header is present", async () => {
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => Response.json({ ok: true }),
 			});
-			facilitator = mockFacilitatorTracked("base-sepolia");
+			facilitator = await mockFacilitatorTracked("base-sepolia");
 
 			gateway = createGateway(
 				makeConfig(upstream.port, facilitator.port, {

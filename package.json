@@ -12,40 +12,40 @@
   },
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "dev": "bun run --watch src/cli.ts",
-    "build": "bun run scripts/build.ts",
-    "test": "bun test",
-    "test:watch": "bun test --watch",
+    "dev": "npx tsx --watch src/cli.ts",
+    "build": "npx tsx scripts/build.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "biome lint ./src",
     "format": "biome format ./src --write",
     "check": "biome check ./src",
     "check:fix": "biome check ./src --fix",
     "type-check": "tsc --noEmit",
-    "ci": "bun run check && bun run type-check && bun test",
+    "ci": "npm run check && npm run type-check && npm run test",
     "npm-dry-run": "npm publish --dry-run"
   },
   "dependencies": {
+    "ioredis": "^5.4.0",
     "yaml": "^2.7.0",
     "zod": "^3.24.0"
   },
   "devDependencies": {
     "viem": "^2.0.0",
     "@biomejs/biome": "^2.3.14",
-    "@biomejs/cli-darwin-arm64": "2.3.14",
-    "@biomejs/cli-darwin-x64": "2.3.14",
-    "@biomejs/cli-linux-arm64": "2.3.14",
-    "@biomejs/cli-linux-x64": "2.3.14",
-    "@types/bun": "^1.2.0",
-    "typescript": "^5.7.0"
+    "@types/node": "^20.0.0",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
   },
   "keywords": [
     "x402",
@@ -68,6 +68,6 @@
     "url": "https://github.com/x402-tollbooth/gateway/issues"
   },
   "engines": {
-    "bun": ">=1.0.0"
+    "node": ">=20.0.0"
   }
 }

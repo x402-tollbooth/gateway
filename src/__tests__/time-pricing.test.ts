@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { serve, type TestServer } from "./helpers/test-server.js";
 
 function makePaymentSignature(payer: string): string {
 	return btoa(
@@ -15,8 +16,8 @@ function makePaymentSignature(payer: string): string {
 }
 
 describe("time pricing model", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let upstream: TestServer;
+	let facilitator: TestServer;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -29,12 +30,12 @@ describe("time pricing model", () => {
 		let verifyCalls = 0;
 		let settleCalls = 0;
 
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator = Bun.serve({
+		facilitator = await serve({
 			port: 0,
 			fetch: async (req) => {
 				const { pathname } = new URL(req.url);
@@ -108,12 +109,12 @@ describe("time pricing model", () => {
 		let verifyCalls = 0;
 		let settleCalls = 0;
 
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator = Bun.serve({
+		facilitator = await serve({
 			port: 0,
 			fetch: async (req) => {
 				const { pathname } = new URL(req.url);
@@ -165,7 +166,7 @@ describe("time pricing model", () => {
 		expect(verifyCalls).toBe(1);
 		expect(settleCalls).toBe(1);
 
-		await Bun.sleep(1_100);
+		await new Promise((r) => setTimeout(r, 1_100));
 
 		const repaid = await fetch(
 			`http://localhost:${gateway.port}/feed/realtime`,
@@ -184,12 +185,12 @@ describe("time pricing model", () => {
 		// Track the first legitimate payment payload so we can distinguish it
 		let legitimatePayload: string | null = null;
 
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator = Bun.serve({
+		facilitator = await serve({
 			port: 0,
 			fetch: async (req) => {
 				const { pathname } = new URL(req.url);

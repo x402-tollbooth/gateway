@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { evaluateMatchers } from "../router/matcher.js";
 import type { MatchRule } from "../types.js";
 

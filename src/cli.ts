@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 
 import { loadConfig } from "./config/loader.js";
 import { createGateway } from "./gateway.js";
