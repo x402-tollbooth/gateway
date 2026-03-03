@@ -23,6 +23,10 @@ const TOKEN_INFO: Record<
 
 /**
  * Build the payment requirements payload for a 402 response.
+ *
+ * When `extraOverride` is provided it replaces the default EIP-712 domain
+ * info for every accepted payment method. This is used by the nanopayments
+ * strategy which needs `GatewayWalletBatched` instead of the per-token domain.
  */
 export function buildPaymentRequirements(
 	price: ResolvedPrice,
@@ -30,6 +34,7 @@ export function buildPaymentRequirements(
 	description: string,
 	timeout: number,
 	accepts: AcceptedPayment[],
+	extraOverride?: { name: string; version: string },
 ): PaymentRequirementsPayload[] {
 	const payTo =
 		typeof price.payTo === "string"
@@ -48,7 +53,7 @@ export function buildPaymentRequirements(
 			maxTimeoutSeconds: timeout,
 			// Use the on-chain contract address; facilitator rejects human-readable names
 			asset: token?.address ?? accept.asset,
-			extra: token?.eip712,
+			extra: extraOverride ?? token?.eip712,
 		};
 	});
 }

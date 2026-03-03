@@ -8,6 +8,7 @@ import type {
 } from "../types.js";
 import { resolveFacilitatorUrl } from "../x402/facilitator.js";
 import { FacilitatorSettlement } from "./facilitator.js";
+import { NanopaymentSettlement } from "./nanopayments.js";
 
 const strategyCache = new Map<string, SettlementStrategy>();
 
@@ -79,6 +80,30 @@ export async function initSettlementStrategy(config: {
 	facilitator?: string | FacilitatorMapping;
 	routes?: Record<string, RouteConfig>;
 }): Promise<SettlementStrategy | null> {
+	if (config.settlement?.strategy === "nanopayments") {
+		// Warn about ignored facilitator overrides
+		if (config.facilitator) {
+			log.warn("nanopayments_strategy_ignores_facilitator", {
+				msg: "Top-level 'facilitator' is ignored when settlement.strategy is 'nanopayments'",
+			});
+		}
+		if (config.routes) {
+			for (const [key, route] of Object.entries(config.routes)) {
+				if (route.facilitator) {
+					log.warn("nanopayments_strategy_ignores_facilitator", {
+						route: key,
+						msg: "Route-level 'facilitator' is ignored when settlement.strategy is 'nanopayments'",
+					});
+				}
+			}
+		}
+
+		return new NanopaymentSettlement({
+			network: config.settlement.network,
+			url: config.settlement.url,
+		});
+	}
+
 	if (config.settlement?.strategy === "custom") {
 		if (!config.settlement.module) {
 			throw new Error("Custom settlement strategy requires a 'module' path");

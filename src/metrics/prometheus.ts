@@ -178,7 +178,7 @@ class HistogramMetric {
 
 export type PaymentOutcome = "success" | "rejected" | "missing";
 export type SettlementOutcome = "success" | "failure";
-export type SettlementStrategyLabel = "facilitator" | "custom";
+export type SettlementStrategyLabel = "facilitator" | "custom" | "nanopayments";
 
 export class TollboothPrometheusMetrics {
 	private readonly requestsTotal = new CounterMetric(

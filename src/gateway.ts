@@ -42,6 +42,10 @@ import {
 	initSettlementStrategy,
 } from "./settlement/loader.js";
 import {
+	NANOPAYMENT_EIP712,
+	NanopaymentSettlement,
+} from "./settlement/nanopayments.js";
+import {
 	buildRedisStorePrefix,
 	resolveRedisStoreConfig,
 } from "./store/resolve.js";
@@ -690,6 +694,9 @@ export function createGateway(
 					routeKey,
 					config.defaults.timeout,
 					accepts,
+					customStrategy instanceof NanopaymentSettlement
+						? NANOPAYMENT_EIP712
+						: undefined,
 				);
 
 				// ── Extract payment from request ────────────────────────────────
@@ -947,7 +954,9 @@ export function createGateway(
 	function resolveStrategyLabel(
 		strategy: SettlementStrategy,
 	): SettlementStrategyLabel {
-		return strategy instanceof FacilitatorSettlement ? "facilitator" : "custom";
+		if (strategy instanceof FacilitatorSettlement) return "facilitator";
+		if (strategy instanceof NanopaymentSettlement) return "nanopayments";
+		return "custom";
 	}
 
 	async function settleWithMetrics(

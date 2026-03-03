@@ -311,9 +311,10 @@ export interface SettlementStrategy {
 }
 
 export interface SettlementStrategyConfig {
-	strategy: "facilitator" | "custom";
+	strategy: "facilitator" | "custom" | "nanopayments";
 	url?: string;
 	module?: string;
+	network?: "testnet" | "mainnet";
 }
 
 // ── Rate Limiting ────────────────────────────────────────────────────────────

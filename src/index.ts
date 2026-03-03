@@ -4,6 +4,7 @@ export { loadConfig } from "./config/loader.js";
 export { tollboothConfigSchema } from "./config/schema.js";
 export { createGateway } from "./gateway.js";
 export { FacilitatorSettlement } from "./settlement/facilitator.js";
+export { NanopaymentSettlement } from "./settlement/nanopayments.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
