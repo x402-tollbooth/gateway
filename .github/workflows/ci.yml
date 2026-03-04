@@ -62,12 +62,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
       - uses: oven-sh/setup-bun@v1
         with:
           bun-version: latest
-      - run: npm install
+      - run: bun install
       - name: Run tests (Bun)
         run: bun vitest run
+
+  e2e-runtime:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - runtime: node
+            node-version: '20'
+          - runtime: node
+            node-version: '22'
+          - runtime: bun
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version || '20' }}
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+      - run: npm install
+      - run: npm run build
+      - name: E2E smoke test (${{ matrix.runtime }} ${{ matrix.node-version }})
+        run: bash scripts/e2e-runtime.sh ${{ matrix.runtime }}

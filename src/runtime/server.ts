@@ -94,7 +94,9 @@ async function writeResponse(
 	res: ServerResponse,
 ): Promise<void> {
 	const headers: Record<string, string | string[]> = {};
+	const hopByHop = new Set(["transfer-encoding", "connection", "keep-alive"]);
 	response.headers.forEach((value, key) => {
+		if (hopByHop.has(key)) return;
 		const existing = headers[key];
 		if (existing != null) {
 			headers[key] = Array.isArray(existing)
