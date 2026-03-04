@@ -36,7 +36,7 @@
   "dependencies": {
     "ioredis": "^5.4.0",
     "yaml": "^2.7.0",
-    "zod": "^3.24.0"
+    "zod": "~3.24.0"
   },
   "devDependencies": {
     "viem": "^2.0.0",
