@@ -745,14 +745,14 @@ describe("settlement config schema", () => {
 // ── NanopaymentSettlement unit tests ────────────────────────────────────────
 
 describe("NanopaymentSettlement", () => {
-	let gateway: ReturnType<typeof Bun.serve>;
+	let gateway: Awaited<ReturnType<typeof serve>>;
 
 	afterEach(() => {
 		gateway?.stop();
 	});
 
 	test("verify returns payer on success", async () => {
-		gateway = mockFacilitator({
+		gateway = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
 			settle: () => Response.json({ success: true }),
 		});
@@ -783,7 +783,7 @@ describe("NanopaymentSettlement", () => {
 	});
 
 	test("verify throws PaymentError on invalid payment", async () => {
-		gateway = mockFacilitator({
+		gateway = await mockFacilitator({
 			verify: () =>
 				Response.json({ isValid: false, invalidReason: "invalid signature" }),
 			settle: () => Response.json({ success: true }),
@@ -813,7 +813,7 @@ describe("NanopaymentSettlement", () => {
 	});
 
 	test("settle returns SettlementInfo on success", async () => {
-		gateway = mockFacilitator({
+		gateway = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
 			settle: () =>
 				Response.json({
@@ -855,7 +855,7 @@ describe("NanopaymentSettlement", () => {
 	});
 
 	test("settle throws PaymentError on failure", async () => {
-		gateway = mockFacilitator({
+		gateway = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
 			settle: () =>
 				Response.json({
@@ -910,7 +910,7 @@ describe("NanopaymentSettlement", () => {
 
 	test("verify iterates requirements on failure", async () => {
 		let callCount = 0;
-		gateway = mockFacilitator({
+		gateway = await mockFacilitator({
 			verify: () => {
 				callCount++;
 				if (callCount === 1) {
@@ -965,8 +965,8 @@ describe("NanopaymentSettlement", () => {
 // ── Nanopayments integration ────────────────────────────────────────────────
 
 describe("nanopayments settlement integration", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let circleGateway: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
+	let circleGateway: Awaited<ReturnType<typeof serve>>;
 	let tollbooth: TollboothGateway;
 
 	afterEach(async () => {
@@ -976,12 +976,12 @@ describe("nanopayments settlement integration", () => {
 	});
 
 	test("uses nanopayments strategy for verify and settle", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		circleGateway = mockFacilitator({
+		circleGateway = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xnano_payer" }),
 			settle: () =>
 				Response.json({
@@ -1022,12 +1022,12 @@ describe("nanopayments settlement integration", () => {
 	});
 
 	test("402 response includes GatewayWalletBatched extra", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		circleGateway = mockFacilitator({
+		circleGateway = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
 			settle: () =>
 				Response.json({
@@ -1072,13 +1072,13 @@ describe("nanopayments settlement integration", () => {
 	});
 
 	test("nanopayments works with after-response timing", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => new Response("Internal Server Error", { status: 500 }),
 		});
 
 		let settleCalled = false;
-		circleGateway = mockFacilitator({
+		circleGateway = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
 			settle: () => {
 				settleCalled = true;
