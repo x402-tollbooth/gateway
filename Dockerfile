@@ -1,29 +1,29 @@
 # Stage 1: Install dependencies and build
-FROM oven/bun:1-alpine AS builder
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+COPY package.json package-lock.json* ./
+RUN npm ci
 
 COPY src/ src/
 COPY scripts/ scripts/
-COPY tsconfig.json ./
+COPY tsconfig.json vitest.config.ts ./
 
-RUN bun run build
+RUN npm run build
 
 # Stage 2: Production image
-FROM oven/bun:1-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production && \
-    rm -rf /tmp/* /root/.bun/install/cache
+COPY package.json package-lock.json* ./
+RUN npm ci --omit=dev && \
+    rm -rf /tmp/* /root/.npm/_cacache
 
 COPY --from=builder /app/dist ./dist
 
 EXPOSE 3000
 
-ENTRYPOINT ["bun", "run", "dist/cli.js"]
+ENTRYPOINT ["node", "dist/cli.js"]
 CMD ["start"]

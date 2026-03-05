@@ -1,28 +1,38 @@
-import { build } from "bun";
-import { rmSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { readFileSync, rmSync } from "node:fs";
+import { build } from "esbuild";
 
 // Clean dist
 rmSync("./dist", { recursive: true, force: true });
 
+// Read package.json to externalize all dependencies
+const pkg = JSON.parse(readFileSync("./package.json", "utf-8"));
+const external = [
+	...Object.keys(pkg.dependencies ?? {}),
+	...Object.keys(pkg.peerDependencies ?? {}),
+];
+
 // ESM build
 await build({
-	entrypoints: ["./src/index.ts", "./src/cli.ts"],
+	entryPoints: ["./src/index.ts", "./src/cli.ts"],
 	outdir: "./dist",
 	format: "esm",
-	target: "bun",
-	sourcemap: "none",
+	platform: "node",
+	target: "node20",
+	sourcemap: false,
 	minify: true,
-	external: ["yaml", "zod"],
+	bundle: true,
+	external,
+	banner: {
+		// Preserve CLI shebang in the output
+		js: "",
+	},
 });
 
 // Generate declarations (no source maps, no declaration maps)
-const proc = Bun.spawn(
-	["bunx", "tsc", "--emitDeclarationOnly", "--declaration", "--declarationMap", "false", "--outDir", "dist"],
-	{
-		stdout: "inherit",
-		stderr: "inherit",
-	},
+execSync(
+	"npx tsc --emitDeclarationOnly --declaration --declarationMap false --outDir dist",
+	{ stdio: "inherit" },
 );
-await proc.exited;
 
-console.log("✅ Build complete");
+console.log("Build complete");

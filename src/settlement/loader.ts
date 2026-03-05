@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { log } from "../logger.js";
 import type {
 	AcceptedPayment,
@@ -25,7 +26,8 @@ export async function loadCustomStrategy(
 	const cached = strategyCache.get(modulePath);
 	if (cached) return cached;
 
-	const resolved = Bun.resolveSync(modulePath, process.cwd());
+	const require = createRequire(`${process.cwd()}/`);
+	const resolved = require.resolve(modulePath);
 	const mod = await import(resolved);
 	const strategy: SettlementStrategy = mod.default ?? mod;
 

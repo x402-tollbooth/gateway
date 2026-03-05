@@ -1,9 +1,15 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { tollboothConfigSchema } from "../config/schema.js";
 import { createGateway } from "../gateway.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
 import { RedisVerificationCacheStore } from "../verification-cache/redis-store.js";
 import { MemoryVerificationCacheStore } from "../verification-cache/store.js";
 import { MockRedisClient } from "./helpers/mock-redis.js";
+import {
+	mockFacilitator,
+	serve,
+	type TestServer,
+} from "./helpers/test-server.js";
 
 // ── MemoryVerificationCacheStore ────────────────────────────────────────────
 
@@ -39,7 +45,7 @@ describe("MemoryVerificationCacheStore", () => {
 
 	test("expires entries after TTL", async () => {
 		await store.set("key1", { requirementIndex: 0 }, 1);
-		await Bun.sleep(5);
+		await new Promise((r) => setTimeout(r, 5));
 		const result = await store.get("key1");
 		expect(result).toBeUndefined();
 	});
@@ -76,27 +82,12 @@ describe("RedisVerificationCacheStore", () => {
 
 	test("expires cache entries after TTL", async () => {
 		await storeA.set("key1", { requirementIndex: 2 }, 10);
-		await Bun.sleep(20);
+		await new Promise((r) => setTimeout(r, 20));
 		expect(await storeB.get("key1")).toBeUndefined();
 	});
 });
 
 // ── Integration Tests ───────────────────────────────────────────────────────
-
-function mockFacilitator(options: {
-	verify: (req: Request) => Response | Promise<Response>;
-	settle: (req: Request) => Response | Promise<Response>;
-}): ReturnType<typeof Bun.serve> {
-	return Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname === "/verify") return options.verify(req);
-			if (url.pathname === "/settle") return options.settle(req);
-			return new Response("Not found", { status: 404 });
-		},
-	});
-}
 
 const paymentSig = btoa(
 	JSON.stringify({ payload: { authorization: { from: "0xTestPayer" } } }),
@@ -134,8 +125,8 @@ function makeConfig(
 }
 
 describe("verification cache", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let upstream: TestServer;
+	let facilitator: TestServer;
 	let gateway: TollboothGateway;
 	let verifyCallCount: number;
 
@@ -145,19 +136,19 @@ describe("verification cache", () => {
 		facilitator?.stop();
 	});
 
-	function setupServers(options?: {
+	async function setupServers(options?: {
 		settlement?: "before-response" | "after-response";
 		verificationCache?: { ttl: string };
 		defaultVerificationCache?: { ttl: string };
 	}) {
 		verifyCallCount = 0;
 
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => {
 				verifyCallCount++;
 				return Response.json({ isValid: true, payer: "0xTestPayer" });
@@ -178,7 +169,7 @@ describe("verification cache", () => {
 
 	describe("before-response mode", () => {
 		test("skips verification on cache hit", async () => {
-			const config = setupServers({ verificationCache: { ttl: "60s" } });
+			const config = await setupServers({ verificationCache: { ttl: "60s" } });
 			gateway = createGateway(config);
 			await gateway.start({ silent: true });
 
@@ -200,12 +191,12 @@ describe("verification cache", () => {
 		test("still settles each request individually", async () => {
 			let settleCount = 0;
 
-			upstream = Bun.serve({
+			upstream = await serve({
 				port: 0,
 				fetch: () => Response.json({ ok: true }),
 			});
 
-			facilitator = mockFacilitator({
+			facilitator = await mockFacilitator({
 				verify: () => Response.json({ isValid: true, payer: "0xTestPayer" }),
 				settle: () => {
 					settleCount++;
@@ -236,7 +227,7 @@ describe("verification cache", () => {
 		});
 
 		test("does not cache when no verificationCache configured", async () => {
-			const config = setupServers(); // No verificationCache
+			const config = await setupServers(); // No verificationCache
 			gateway = createGateway(config);
 			await gateway.start({ silent: true });
 
@@ -251,7 +242,7 @@ describe("verification cache", () => {
 		});
 
 		test("returns 402 on cache hit with no payment header", async () => {
-			const config = setupServers({ verificationCache: { ttl: "60s" } });
+			const config = await setupServers({ verificationCache: { ttl: "60s" } });
 			gateway = createGateway(config);
 			await gateway.start({ silent: true });
 
@@ -266,7 +257,7 @@ describe("verification cache", () => {
 		});
 
 		test("re-verifies after cache TTL expires", async () => {
-			const config = setupServers({
+			const config = await setupServers({
 				verificationCache: { ttl: "1s" },
 			});
 			gateway = createGateway(config);
@@ -279,7 +270,7 @@ describe("verification cache", () => {
 			expect(verifyCallCount).toBe(1);
 
 			// Wait for cache to expire
-			await Bun.sleep(1100);
+			await new Promise((r) => setTimeout(r, 1100));
 
 			// Second request — must re-verify
 			await fetch(`http://localhost:${gateway.port}/test`, {
@@ -293,7 +284,7 @@ describe("verification cache", () => {
 
 	describe("after-response mode", () => {
 		test("skips verification on cache hit", async () => {
-			const config = setupServers({
+			const config = await setupServers({
 				settlement: "after-response",
 				verificationCache: { ttl: "60s" },
 			});
@@ -318,7 +309,7 @@ describe("verification cache", () => {
 
 	describe("defaults-level config", () => {
 		test("uses global default when no route-level cache configured", async () => {
-			const config = setupServers({
+			const config = await setupServers({
 				defaultVerificationCache: { ttl: "60s" },
 			});
 			gateway = createGateway(config);
@@ -341,7 +332,7 @@ describe("verification cache", () => {
 		test("accepts a custom store via options", async () => {
 			const customStore = new MemoryVerificationCacheStore();
 
-			const config = setupServers({ verificationCache: { ttl: "60s" } });
+			const config = await setupServers({ verificationCache: { ttl: "60s" } });
 			gateway = createGateway(config, {
 				verificationCacheStore: customStore,
 			});
@@ -364,8 +355,6 @@ describe("verification cache", () => {
 // ── Config schema validation ────────────────────────────────────────────────
 
 describe("verificationCache config schema", () => {
-	const { tollboothConfigSchema } = require("../config/schema.js");
-
 	const validConfig = {
 		wallets: { base: "0xtest" },
 		accepts: [{ asset: "USDC", network: "base" }],

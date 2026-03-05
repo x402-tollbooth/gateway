@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { RedisTimeSessionStore } from "../session/redis-store.js";
 import { MemoryTimeSessionStore, parseDuration } from "../session/store.js";
 import { MockRedisClient } from "./helpers/mock-redis.js";
@@ -77,7 +77,7 @@ describe("RedisTimeSessionStore", () => {
 
 	test("expires sessions using expiresAt", async () => {
 		await storeA.set("route:payer", Date.now() + 10);
-		await Bun.sleep(20);
+		await new Promise((r) => setTimeout(r, 20));
 		expect(await storeB.get("route:payer")).toBeUndefined();
 	});
 });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { createGateway } from "../gateway.js";
 import {
 	buildExportSpec,
@@ -7,6 +7,7 @@ import {
 	mergeOpenAPISpec,
 } from "../openapi/spec.js";
 import type { TollboothConfig, TollboothGateway } from "../types.js";
+import { serve, type TestServer } from "./helpers/test-server.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -360,14 +361,14 @@ const USERS_SPEC = {
 
 describe("buildExportSpec", () => {
 	test("merges specs from multiple upstreams", async () => {
-		const petServer = Bun.serve({
+		const petServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(PETSTORE_SPEC), {
 					headers: { "Content-Type": "application/json" },
 				}),
 		});
-		const userServer = Bun.serve({
+		const userServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(USERS_SPEC), {
@@ -432,7 +433,7 @@ describe("buildExportSpec", () => {
 	});
 
 	test("includes config-only routes alongside upstream routes", async () => {
-		const petServer = Bun.serve({
+		const petServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(PETSTORE_SPEC), {
@@ -474,7 +475,7 @@ describe("buildExportSpec", () => {
 
 describe("importOpenAPIRoutes", () => {
 	test("imports routes from spec served by local HTTP server", async () => {
-		const specServer = Bun.serve({
+		const specServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(PETSTORE_SPEC), {
@@ -507,7 +508,7 @@ describe("importOpenAPIRoutes", () => {
 	});
 
 	test("config-defined routes take precedence over imported ones", async () => {
-		const specServer = Bun.serve({
+		const specServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(PETSTORE_SPEC), {
@@ -543,7 +544,7 @@ describe("importOpenAPIRoutes", () => {
 	});
 
 	test("skips non-3.x OpenAPI specs", async () => {
-		const specServer = Bun.serve({
+		const specServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(
@@ -572,7 +573,7 @@ describe("importOpenAPIRoutes", () => {
 	});
 
 	test("stores summary in metadata when available", async () => {
-		const specServer = Bun.serve({
+		const specServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(PETSTORE_SPEC), {
@@ -689,7 +690,7 @@ describe("OpenAPI export endpoint", () => {
 	});
 
 	test("gateway imports OpenAPI routes and serves them", async () => {
-		const specServer = Bun.serve({
+		const specServer: TestServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(PETSTORE_SPEC), {

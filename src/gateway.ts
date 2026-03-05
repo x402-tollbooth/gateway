@@ -1,4 +1,4 @@
-import { RedisClient } from "bun";
+import Redis from "ioredis";
 import { generateDiscoveryMetadata } from "./discovery/metadata.js";
 import {
 	runOnError,
@@ -30,6 +30,8 @@ import { RedisRateLimitStore } from "./ratelimit/redis-store.js";
 import { MemoryRateLimitStore, parseWindow } from "./ratelimit/store.js";
 import { rewritePath } from "./router/rewriter.js";
 import { getMethodsForPath, matchRoute } from "./router/router.js";
+import type { PortableServer } from "./runtime/server.js";
+import { createPortableServer } from "./runtime/server.js";
 import { RedisTimeSessionStore } from "./session/redis-store.js";
 import {
 	buildSessionKey,
@@ -162,7 +164,7 @@ export function createGateway(
 		timeSessionStore?: TimeSessionStore;
 	},
 ): TollboothGateway {
-	let server: ReturnType<typeof Bun.serve> | null = null;
+	let server: PortableServer | null = null;
 	const rateLimitStore =
 		options?.rateLimitStore ?? createRateLimitStoreFromConfig(config);
 	const verificationCacheStore =
@@ -1384,17 +1386,17 @@ export function createGateway(
 				}
 			}
 
-			server = Bun.serve({
+			server = await createPortableServer({
 				port: config.gateway.port,
 				hostname: config.gateway.hostname,
-				fetch: async (request, bunServer) => {
+				fetch: async (request, info) => {
 					const pathname = new URL(request.url).pathname;
 					const preflightResponse = handleCorsPreflight(request, pathname);
 					if (preflightResponse) {
 						return preflightResponse;
 					}
 
-					const remoteIp = bunServer.requestIP(request)?.address;
+					const remoteIp = info.remoteAddress;
 					const response = await handleRequest(request, remoteIp);
 					return applyCorsHeaders(response, request, pathname);
 				},
@@ -1504,7 +1506,7 @@ function createRateLimitStoreFromConfig(
 ): RateLimitStore {
 	const redis = resolveRedisStoreConfig(config, "rateLimit");
 	if (!redis) return new MemoryRateLimitStore();
-	return new RedisRateLimitStore(new RedisClient(redis.url, redis.options), {
+	return new RedisRateLimitStore(createRedisAdapter(redis.url, redis.options), {
 		prefix: buildRedisStorePrefix(redis.prefix, "rateLimit"),
 		closeClient: true,
 	});
@@ -1516,7 +1518,7 @@ function createVerificationCacheStoreFromConfig(
 	const redis = resolveRedisStoreConfig(config, "verificationCache");
 	if (!redis) return new MemoryVerificationCacheStore();
 	return new RedisVerificationCacheStore(
-		new RedisClient(redis.url, redis.options),
+		createRedisAdapter(redis.url, redis.options),
 		{
 			prefix: buildRedisStorePrefix(redis.prefix, "verificationCache"),
 			closeClient: true,
@@ -1529,10 +1531,13 @@ function createTimeSessionStoreFromConfig(
 ): TimeSessionStore {
 	const redis = resolveRedisStoreConfig(config, "timeSession");
 	if (!redis) return new MemoryTimeSessionStore();
-	return new RedisTimeSessionStore(new RedisClient(redis.url, redis.options), {
-		prefix: buildRedisStorePrefix(redis.prefix, "timeSession"),
-		closeClient: true,
-	});
+	return new RedisTimeSessionStore(
+		createRedisAdapter(redis.url, redis.options),
+		{
+			prefix: buildRedisStorePrefix(redis.prefix, "timeSession"),
+			closeClient: true,
+		},
+	);
 }
 
 function destroyOrCloseStore(store: unknown): void {
@@ -1636,4 +1641,34 @@ function appendVary(headers: Headers, value: string): void {
 
 function unique(values: string[]): string[] {
 	return [...new Set(values)];
+}
+
+/**
+ * Create a Redis adapter from ioredis that satisfies all tollbooth
+ * Redis store client interfaces (rate-limit, time-session, verification-cache).
+ */
+function createRedisAdapter(
+	url: string,
+	options?: import("./types.js").RedisStoreOptions,
+) {
+	const redisOptions: import("ioredis").RedisOptions = {};
+	if (options?.connectionTimeout != null) {
+		redisOptions.connectTimeout = options.connectionTimeout;
+	}
+	if (options?.maxRetries != null) {
+		redisOptions.maxRetriesPerRequest = options.maxRetries;
+	}
+	if (options?.enableOfflineQueue != null) {
+		redisOptions.enableOfflineQueue = options.enableOfflineQueue;
+	}
+	if (options?.autoReconnect === false) {
+		redisOptions.retryStrategy = () => null;
+	}
+
+	const client = new Redis(url, redisOptions);
+	return Object.assign(client, {
+		close() {
+			client.disconnect();
+		},
+	});
 }
