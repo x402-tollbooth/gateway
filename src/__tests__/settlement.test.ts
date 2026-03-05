@@ -1,4 +1,11 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, describe, expect, test } from "vitest";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+import { tollboothConfigSchema } from "../config/schema.js";
 import { createGateway } from "../gateway.js";
 import { FacilitatorSettlement } from "../settlement/facilitator.js";
 import {
@@ -15,23 +22,7 @@ import type {
 	TollboothGateway,
 } from "../types.js";
 import { PaymentError } from "../x402/middleware.js";
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-function mockFacilitator(options: {
-	verify: (req: Request) => Response | Promise<Response>;
-	settle: (req: Request) => Response | Promise<Response>;
-}): ReturnType<typeof Bun.serve> {
-	return Bun.serve({
-		port: 0,
-		async fetch(req) {
-			const url = new URL(req.url);
-			if (url.pathname === "/verify") return options.verify(req);
-			if (url.pathname === "/settle") return options.settle(req);
-			return new Response("Not found", { status: 404 });
-		},
-	});
-}
+import { mockFacilitator, serve } from "./helpers/test-server.js";
 
 const paymentSig = btoa(JSON.stringify({ x402Version: 2, payload: "mock" }));
 
@@ -76,14 +67,14 @@ function makeConfig(
 // ── FacilitatorSettlement unit tests ─────────────────────────────────────────
 
 describe("FacilitatorSettlement", () => {
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let facilitator: Awaited<ReturnType<typeof serve>>;
 
 	afterEach(() => {
 		facilitator?.stop();
 	});
 
 	test("verify returns payer on success", async () => {
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
 			settle: () => Response.json({ success: true }),
 		});
@@ -114,7 +105,7 @@ describe("FacilitatorSettlement", () => {
 	});
 
 	test("verify throws PaymentError on invalid payment", async () => {
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () =>
 				Response.json({ isValid: false, invalidReason: "bad signature" }),
 			settle: () => Response.json({ success: true }),
@@ -144,7 +135,7 @@ describe("FacilitatorSettlement", () => {
 	});
 
 	test("settle returns SettlementInfo on success", async () => {
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
 			settle: () =>
 				Response.json({
@@ -187,12 +178,12 @@ describe("FacilitatorSettlement", () => {
 
 	test("verify iterates requirements and succeeds on second match", async () => {
 		// First facilitator rejects, second accepts
-		const badFacilitator = mockFacilitator({
+		const badFacilitator = await mockFacilitator({
 			verify: () =>
 				Response.json({ isValid: false, invalidReason: "wrong network" }),
 			settle: () => Response.json({ success: true }),
 		});
-		const goodFacilitator = mockFacilitator({
+		const goodFacilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xsecond" }),
 			settle: () =>
 				Response.json({
@@ -244,7 +235,7 @@ describe("FacilitatorSettlement", () => {
 	});
 
 	test("verify throws last error when all requirements fail", async () => {
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () =>
 				Response.json({ isValid: false, invalidReason: "always fails" }),
 			settle: () => Response.json({ success: true }),
@@ -285,7 +276,7 @@ describe("FacilitatorSettlement", () => {
 	});
 
 	test("settle throws PaymentError on failure", async () => {
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
 			settle: () =>
 				Response.json({
@@ -359,8 +350,8 @@ describe("loadCustomStrategy", () => {
 	});
 
 	test("throws when module exports no verify/settle", async () => {
-		const badPath = `${import.meta.dir}/_test_bad_strategy.ts`;
-		await Bun.write(badPath, `export default { notAStrategy: true };`);
+		const badPath = `${__dirname}/_test_bad_strategy.ts`;
+		writeFileSync(badPath, `export default { notAStrategy: true };`);
 
 		try {
 			await expect(loadCustomStrategy(badPath)).rejects.toThrow(
@@ -376,7 +367,7 @@ describe("loadCustomStrategy", () => {
 // ── Custom strategy integration ─────────────────────────────────────────────
 
 describe("custom settlement strategy", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -385,13 +376,13 @@ describe("custom settlement strategy", () => {
 	});
 
 	test("uses custom strategy for verify and settle", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
-		const strategyPath = `${import.meta.dir}/_test_custom_strategy.ts`;
-		await Bun.write(
+		const strategyPath = `${__dirname}/_test_custom_strategy.ts`;
+		writeFileSync(
 			strategyPath,
 			`export default {
 				async verify(payment, requirements) {
@@ -443,17 +434,17 @@ describe("custom settlement strategy", () => {
 	});
 
 	test("custom strategy works with after-response timing", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => new Response("Internal Server Error", { status: 500 }),
 		});
 
 		const _settleCalled = false;
-		const strategyPath = `${import.meta.dir}/_test_custom_strategy_after.ts`;
+		const strategyPath = `${__dirname}/_test_custom_strategy_after.ts`;
 		// Store settle tracking on globalThis so the strategy module can access it
 		(globalThis as Record<string, unknown>).__customSettleCalled = false;
 
-		await Bun.write(
+		writeFileSync(
 			strategyPath,
 			`export default {
 				async verify(payment, requirements) {
@@ -517,8 +508,8 @@ describe("custom settlement strategy", () => {
 // ── Settlement strategy config in gateway ───────────────────────────────────
 
 describe("settlement strategy config", () => {
-	let upstream: ReturnType<typeof Bun.serve>;
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let upstream: Awaited<ReturnType<typeof serve>>;
+	let facilitator: Awaited<ReturnType<typeof serve>>;
 	let gateway: TollboothGateway;
 
 	afterEach(async () => {
@@ -528,13 +519,13 @@ describe("settlement strategy config", () => {
 	});
 
 	test("settlement.url overrides facilitator field", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
 		// This facilitator should be used (from settlement.url)
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
 			settle: () =>
 				Response.json({
@@ -580,13 +571,13 @@ describe("settlement strategy config", () => {
 	});
 
 	test("route-level facilitator still overrides settlement.url", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
 
 		// This is the correct facilitator (route-level override)
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xroute" }),
 			settle: () =>
 				Response.json({
@@ -629,11 +620,11 @@ describe("settlement strategy config", () => {
 	});
 
 	test("returns 402 when no payment header present", async () => {
-		upstream = Bun.serve({
+		upstream = await serve({
 			port: 0,
 			fetch: () => Response.json({ ok: true }),
 		});
-		facilitator = mockFacilitator({
+		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xabc" }),
 			settle: () =>
 				Response.json({
@@ -657,8 +648,6 @@ describe("settlement strategy config", () => {
 // ── Config schema validation ────────────────────────────────────────────────
 
 describe("settlement config schema", () => {
-	const { tollboothConfigSchema } = require("../config/schema.js");
-
 	const baseInput = {
 		wallets: { base: "0xtest" },
 		accepts: [{ asset: "USDC", network: "base" }],

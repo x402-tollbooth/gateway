@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { createGateway } from "../gateway.js";
 import { proxyRequest } from "../proxy/proxy.js";
 import type { TollboothConfig, UpstreamConfig } from "../types.js";
+import { serve, type TestServer } from "./helpers/test-server.js";
 
 /**
  * Helper: read a ReadableStream to a string.
@@ -24,8 +25,8 @@ async function readStream(body: ReadableStream<Uint8Array>): Promise<string> {
 function createSSEServer(
 	events: string[],
 	intervalMs = 10,
-): ReturnType<typeof Bun.serve> {
-	return Bun.serve({
+): Promise<TestServer> {
+	return serve({
 		port: 0,
 		fetch() {
 			const stream = new ReadableStream<Uint8Array>({
@@ -58,7 +59,7 @@ function createSSEServer(
 // ── proxyRequest unit tests ──────────────────────────────────────────────────
 
 describe("SSE streaming — proxyRequest", () => {
-	let server: ReturnType<typeof Bun.serve>;
+	let server: TestServer;
 
 	afterEach(() => {
 		server?.stop();
@@ -71,7 +72,7 @@ describe("SSE streaming — proxyRequest", () => {
 			"data: [DONE]\n\n",
 		];
 
-		server = createSSEServer(events);
+		server = await createSSEServer(events);
 
 		const upstream: UpstreamConfig = {
 			url: `http://localhost:${server.port}`,
@@ -99,7 +100,7 @@ describe("SSE streaming — proxyRequest", () => {
 	});
 
 	test("preserves SSE response headers", async () => {
-		server = createSSEServer(["data: hi\n\n"]);
+		server = await createSSEServer(["data: hi\n\n"]);
 
 		const upstream: UpstreamConfig = {
 			url: `http://localhost:${server.port}`,
@@ -117,7 +118,7 @@ describe("SSE streaming — proxyRequest", () => {
 
 	test("SSE stream survives past connection timeout", async () => {
 		// Events spread over 300ms — well past the 100ms connection timeout.
-		server = Bun.serve({
+		server = await serve({
 			port: 0,
 			fetch() {
 				const stream = new ReadableStream<Uint8Array>({
@@ -171,7 +172,7 @@ describe("SSE streaming — proxyRequest", () => {
 	});
 
 	test("non-streaming responses still work", async () => {
-		server = Bun.serve({
+		server = await serve({
 			port: 0,
 			fetch() {
 				return Response.json({ text: "Hello world" });
@@ -194,8 +195,8 @@ describe("SSE streaming — proxyRequest", () => {
 // ── Gateway integration test ─────────────────────────────────────────────────
 
 describe("SSE streaming — gateway integration", () => {
-	let sseUpstream: ReturnType<typeof Bun.serve>;
-	let facilitator: ReturnType<typeof Bun.serve>;
+	let sseUpstream: TestServer;
+	let facilitator: TestServer;
 	let gateway: ReturnType<typeof createGateway>;
 
 	afterEach(async () => {
@@ -206,14 +207,14 @@ describe("SSE streaming — gateway integration", () => {
 
 	test("SSE streams through the full gateway after payment", async () => {
 		// ── Mock SSE upstream ───────────────────────────────────────────────
-		sseUpstream = createSSEServer([
+		sseUpstream = await createSSEServer([
 			'data: {"id":"1","choices":[{"delta":{"content":"Hi"}}]}\n\n',
 			'data: {"id":"2","choices":[{"delta":{"content":"!"}}]}\n\n',
 			"data: [DONE]\n\n",
 		]);
 
 		// ── Mock facilitator (always approves) ──────────────────────────────
-		facilitator = Bun.serve({
+		facilitator = await serve({
 			port: 0,
 			async fetch(req) {
 				const url = new URL(req.url);
@@ -287,14 +288,14 @@ describe("SSE streaming — gateway integration", () => {
 	});
 
 	test("non-streaming response through gateway still works", async () => {
-		sseUpstream = Bun.serve({
+		sseUpstream = await serve({
 			port: 0,
 			fetch() {
 				return Response.json({ id: "resp-1", text: "Hello" });
 			},
 		});
 
-		facilitator = Bun.serve({
+		facilitator = await serve({
 			port: 0,
 			async fetch(req) {
 				const url = new URL(req.url);

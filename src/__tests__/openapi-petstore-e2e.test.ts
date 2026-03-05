@@ -1,10 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
 	buildExportSpec,
 	fetchOpenAPISpec,
 	importOpenAPIRoutes,
 } from "../openapi/spec.js";
 import type { TollboothConfig } from "../types.js";
+import { serve, type TestServer } from "./helpers/test-server.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -34,13 +35,13 @@ function makeConfig(
 // ── Setup: fetch spec once, serve locally ────────────────────────────────────
 
 let petstoreSpec: Record<string, unknown> | null = null;
-let localServer: ReturnType<typeof Bun.serve> | null = null;
+let localServer: TestServer | null = null;
 let specUrl: string;
 
 beforeAll(async () => {
 	try {
 		petstoreSpec = await fetchOpenAPISpec(PETSTORE_URL);
-		localServer = Bun.serve({
+		localServer = await serve({
 			port: 0,
 			fetch: () =>
 				new Response(JSON.stringify(petstoreSpec), {

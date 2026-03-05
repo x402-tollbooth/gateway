@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { interpolateEnv } from "../config/env.js";
 import { loadConfig } from "../config/loader.js";
 import { tollboothConfigSchema } from "../config/schema.js";

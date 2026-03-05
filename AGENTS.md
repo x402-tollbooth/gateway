@@ -11,16 +11,22 @@ x402 API gateway — turns any API into a paid API using the x402 protocol.
 - `src/proxy/` — upstream request forwarding, body buffering
 - `src/hooks/` — lifecycle hook loading and execution
 - `src/discovery/` — x402 V2 auto-discovery metadata generation
-- `src/gateway.ts` — main server tying everything together (Bun.serve)
+- `src/runtime/` — portable HTTP server adapter (node:http, works on both Node.js and Bun)
+- `src/gateway.ts` — main server tying everything together
 - `src/cli.ts` — CLI entry point
 
 ## Commands
 
-- `bun run dev` — start with watch mode
-- `bun run build` — build ESM + declarations
-- `bun test` — run tests
-- `bun run check` — biome lint + format check
-- `bun run type-check` — tsc --noEmit
+- `npm run dev` — start with watch mode
+- `npm run build` — build ESM + declarations (esbuild + tsc)
+- `npm test` — run tests (vitest)
+- `npm run check` — biome lint + format check
+- `npm run type-check` — tsc --noEmit
+
+## Runtime Support
+
+- Node.js 20+ (`npx tollbooth start`)
+- Bun 1.0+ (`bunx tollbooth start`)
 
 ## Key Design Decisions
 
@@ -30,3 +36,5 @@ x402 API gateway — turns any API into a paid API using the x402 protocol.
 - Hooks: onRequest → onPriceResolved → onSettled → onResponse / onError
 - Route-level hooks override global hooks
 - Uses x402 V2 headers (PAYMENT-REQUIRED, not X-PAYMENT)
+- HTTP server uses `node:http` for portability across Node.js and Bun
+- Redis client uses `ioredis` for universal runtime support
