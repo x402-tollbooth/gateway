@@ -294,8 +294,7 @@ function toGatewayPayload(
 	payment: unknown,
 	req: PaymentRequirementsPayload,
 ): unknown {
-	const base =
-		typeof payment === "object" && payment !== null ? payment : {};
+	const base = typeof payment === "object" && payment !== null ? payment : {};
 	const network = NETWORK_TO_CAIP2[req.network] ?? req.network;
 	return {
 		...base,

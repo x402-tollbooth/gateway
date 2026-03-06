@@ -38,10 +38,7 @@ export function mockFacilitator(options: {
 				return options.verify(req);
 			if (url.pathname === "/settle" || url.pathname === "/v1/x402/settle")
 				return options.settle(req);
-			if (
-				url.pathname === "/v1/x402/supported" &&
-				options.supported
-			)
+			if (url.pathname === "/v1/x402/supported" && options.supported)
 				return options.supported(req);
 			return new Response("Not found", { status: 404 });
 		},
