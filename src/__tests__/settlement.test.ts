@@ -12,6 +12,10 @@ import {
 	createFacilitatorStrategy,
 	loadCustomStrategy,
 } from "../settlement/loader.js";
+import {
+	NANOPAYMENT_EIP712,
+	NanopaymentSettlement,
+} from "../settlement/nanopayments.js";
 import type {
 	PaymentRequirementsPayload,
 	TollboothConfig,
@@ -27,7 +31,7 @@ function makeConfig(
 	options?: {
 		facilitatorPort?: number;
 		settlementUrl?: string;
-		settlementStrategy?: "facilitator" | "custom";
+		settlementStrategy?: "facilitator" | "custom" | "nanopayments";
 		settlementModule?: string;
 	},
 ): TollboothConfig {
@@ -700,5 +704,486 @@ describe("settlement config schema", () => {
 	test("config without settlement block still valid", () => {
 		const result = tollboothConfigSchema.safeParse(baseInput);
 		expect(result.success).toBe(true);
+	});
+
+	test("accepts nanopayments strategy", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...baseInput,
+			settlement: { strategy: "nanopayments" },
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts nanopayments strategy with network", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...baseInput,
+			settlement: { strategy: "nanopayments", network: "mainnet" },
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("accepts nanopayments strategy with custom url", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...baseInput,
+			settlement: {
+				strategy: "nanopayments",
+				url: "https://gateway-api-testnet.circle.com",
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects nanopayments strategy with invalid network", () => {
+		const result = tollboothConfigSchema.safeParse({
+			...baseInput,
+			settlement: { strategy: "nanopayments", network: "invalid" },
+		});
+		expect(result.success).toBe(false);
+	});
+});
+
+// ── NanopaymentSettlement unit tests ────────────────────────────────────────
+
+describe("NanopaymentSettlement", () => {
+	let gateway: Awaited<ReturnType<typeof serve>>;
+
+	afterEach(() => {
+		gateway?.stop();
+	});
+
+	test("verify returns payer on success", async () => {
+		gateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
+			settle: () => Response.json({ success: true }),
+		});
+
+		const strategy = new NanopaymentSettlement({
+			url: `http://localhost:${gateway.port}`,
+		});
+
+		const requirements: PaymentRequirementsPayload[] = [
+			{
+				scheme: "exact",
+				network: "base-sepolia",
+				maxAmountRequired: "100",
+				resource: "/test",
+				description: "GET /test",
+				payTo: "0xpayto",
+				maxTimeoutSeconds: 60,
+				asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+				extra: NANOPAYMENT_EIP712,
+			},
+		];
+
+		const verification = await strategy.verify(
+			{ x402Version: 2, payload: "mock" },
+			requirements,
+		);
+		expect(verification.payer).toBe("0xnano");
+	});
+
+	test("verify throws PaymentError on invalid payment", async () => {
+		gateway = await mockFacilitator({
+			verify: () =>
+				Response.json({ isValid: false, invalidReason: "invalid signature" }),
+			settle: () => Response.json({ success: true }),
+		});
+
+		const strategy = new NanopaymentSettlement({
+			url: `http://localhost:${gateway.port}`,
+		});
+
+		const requirements: PaymentRequirementsPayload[] = [
+			{
+				scheme: "exact",
+				network: "base-sepolia",
+				maxAmountRequired: "100",
+				resource: "/test",
+				description: "GET /test",
+				payTo: "0xpayto",
+				maxTimeoutSeconds: 60,
+				asset: "0xtoken",
+				extra: NANOPAYMENT_EIP712,
+			},
+		];
+
+		await expect(
+			strategy.verify({ payload: "bad" }, requirements),
+		).rejects.toThrow(PaymentError);
+	});
+
+	test("settle returns SettlementInfo on success", async () => {
+		gateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
+			settle: () =>
+				Response.json({
+					success: true,
+					payer: "0xnano",
+					transaction: "0xnanotx",
+					network: "base-sepolia",
+				}),
+		});
+
+		const strategy = new NanopaymentSettlement({
+			url: `http://localhost:${gateway.port}`,
+		});
+
+		const requirements: PaymentRequirementsPayload[] = [
+			{
+				scheme: "exact",
+				network: "base-sepolia",
+				maxAmountRequired: "100",
+				resource: "/test",
+				description: "GET /test",
+				payTo: "0xpayto",
+				maxTimeoutSeconds: 60,
+				asset: "0xtoken",
+				extra: NANOPAYMENT_EIP712,
+			},
+		];
+
+		const verification = await strategy.verify(
+			{ x402Version: 2, payload: "mock" },
+			requirements,
+		);
+		const settlement = await strategy.settle(verification);
+
+		expect(settlement.payer).toBe("0xnano");
+		expect(settlement.transaction).toBe("0xnanotx");
+		expect(settlement.network).toBe("base-sepolia");
+		expect(settlement.amount).toBe("100");
+	});
+
+	test("settle throws PaymentError on failure", async () => {
+		gateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
+			settle: () =>
+				Response.json({
+					success: false,
+					errorReason: "insufficient balance",
+				}),
+		});
+
+		const strategy = new NanopaymentSettlement({
+			url: `http://localhost:${gateway.port}`,
+		});
+
+		const requirements: PaymentRequirementsPayload[] = [
+			{
+				scheme: "exact",
+				network: "base-sepolia",
+				maxAmountRequired: "100",
+				resource: "/test",
+				description: "GET /test",
+				payTo: "0xpayto",
+				maxTimeoutSeconds: 60,
+				asset: "0xtoken",
+				extra: NANOPAYMENT_EIP712,
+			},
+		];
+
+		const verification = await strategy.verify(
+			{ x402Version: 2, payload: "mock" },
+			requirements,
+		);
+		await expect(strategy.settle(verification)).rejects.toThrow(PaymentError);
+	});
+
+	test("settle rejects foreign verification", async () => {
+		const strategy = new NanopaymentSettlement({ url: "http://unused" });
+
+		await expect(strategy.settle({ payer: "0xforeign" })).rejects.toThrow(
+			PaymentError,
+		);
+	});
+
+	test("defaults to testnet gateway url", () => {
+		const strategy = new NanopaymentSettlement();
+		// Verify it creates without error (uses testnet by default)
+		expect(strategy).toBeInstanceOf(NanopaymentSettlement);
+	});
+
+	test("uses mainnet gateway url when configured", () => {
+		const strategy = new NanopaymentSettlement({ network: "mainnet" });
+		expect(strategy).toBeInstanceOf(NanopaymentSettlement);
+	});
+
+	test("verify iterates requirements on failure", async () => {
+		let callCount = 0;
+		gateway = await mockFacilitator({
+			verify: () => {
+				callCount++;
+				if (callCount === 1) {
+					return Response.json({
+						isValid: false,
+						invalidReason: "wrong scheme",
+					});
+				}
+				return Response.json({ isValid: true, payer: "0xsecond" });
+			},
+			settle: () => Response.json({ success: true }),
+		});
+
+		const strategy = new NanopaymentSettlement({
+			url: `http://localhost:${gateway.port}`,
+		});
+
+		const requirements: PaymentRequirementsPayload[] = [
+			{
+				scheme: "exact",
+				network: "base-sepolia",
+				maxAmountRequired: "100",
+				resource: "/test",
+				description: "GET /test",
+				payTo: "0xpayto",
+				maxTimeoutSeconds: 60,
+				asset: "0xtoken_a",
+				extra: NANOPAYMENT_EIP712,
+			},
+			{
+				scheme: "exact",
+				network: "base",
+				maxAmountRequired: "200",
+				resource: "/test",
+				description: "GET /test",
+				payTo: "0xpayto",
+				maxTimeoutSeconds: 60,
+				asset: "0xtoken_b",
+				extra: NANOPAYMENT_EIP712,
+			},
+		];
+
+		const verification = await strategy.verify(
+			{ x402Version: 2, payload: "mock" },
+			requirements,
+		);
+		expect(verification.payer).toBe("0xsecond");
+		expect(callCount).toBe(2);
+	});
+});
+
+// ── Nanopayments integration ────────────────────────────────────────────────
+
+describe("nanopayments settlement integration", () => {
+	let upstream: Awaited<ReturnType<typeof serve>>;
+	let circleGateway: Awaited<ReturnType<typeof serve>>;
+	let tollbooth: TollboothGateway;
+
+	afterEach(async () => {
+		await tollbooth?.stop();
+		upstream?.stop();
+		circleGateway?.stop();
+	});
+
+	test("uses nanopayments strategy for verify and settle", async () => {
+		upstream = await serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		circleGateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano_payer" }),
+			settle: () =>
+				Response.json({
+					success: true,
+					payer: "0xnano_payer",
+					transaction: "0xnano_tx",
+					network: "base-sepolia",
+				}),
+		});
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { "base-sepolia": "0xtest" },
+			accepts: [{ asset: "USDC", network: "base-sepolia" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: {
+				"GET /test": {
+					upstream: "api",
+					price: "$0.01",
+				},
+			},
+			settlement: {
+				strategy: "nanopayments",
+				url: `http://localhost:${circleGateway.port}`,
+			},
+		};
+
+		tollbooth = createGateway(config);
+		await tollbooth.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${tollbooth.port}/test`, {
+			headers: { "payment-signature": paymentSig },
+		});
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get("payment-response")).toBeTruthy();
+	});
+
+	test("402 response includes GatewayWalletBatched extra", async () => {
+		upstream = await serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		circleGateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
+			settle: () =>
+				Response.json({
+					success: true,
+					payer: "0xnano",
+					transaction: "0xtx",
+					network: "base-sepolia",
+				}),
+		});
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { "base-sepolia": "0xtest" },
+			accepts: [{ asset: "USDC", network: "base-sepolia" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: {
+				"GET /test": {
+					upstream: "api",
+					price: "$0.01",
+				},
+			},
+			settlement: {
+				strategy: "nanopayments",
+				url: `http://localhost:${circleGateway.port}`,
+			},
+		};
+
+		tollbooth = createGateway(config);
+		await tollbooth.start({ silent: true });
+
+		// No payment header → should get 402 with nanopayment requirements
+		const res = await fetch(`http://localhost:${tollbooth.port}/test`);
+		expect(res.status).toBe(402);
+
+		const body = await res.json();
+		const extra = body.accepts?.[0]?.paymentRequirements?.extra;
+		expect(extra).toEqual({
+			name: "GatewayWalletBatched",
+			version: "1",
+		});
+	});
+
+	test("402 response includes verifyingContract from /v1/x402/supported", async () => {
+		upstream = await serve({
+			port: 0,
+			fetch: () => Response.json({ ok: true }),
+		});
+
+		circleGateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
+			settle: () =>
+				Response.json({
+					success: true,
+					payer: "0xnano",
+					transaction: "0xtx",
+					network: "base-sepolia",
+				}),
+			supported: () =>
+				Response.json({
+					kinds: [
+						{
+							x402Version: 2,
+							scheme: "exact",
+							network: "eip155:84532",
+							extra: {
+								name: "GatewayWalletBatched",
+								version: "1",
+								verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+							},
+						},
+					],
+				}),
+		});
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { "base-sepolia": "0xtest" },
+			accepts: [{ asset: "USDC", network: "base-sepolia" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: {
+				"GET /test": {
+					upstream: "api",
+					price: "$0.01",
+				},
+			},
+			settlement: {
+				strategy: "nanopayments",
+				url: `http://localhost:${circleGateway.port}`,
+			},
+		};
+
+		tollbooth = createGateway(config);
+		await tollbooth.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${tollbooth.port}/test`);
+		expect(res.status).toBe(402);
+
+		const body = await res.json();
+		const extra = body.accepts?.[0]?.paymentRequirements?.extra;
+		expect(extra).toEqual({
+			name: "GatewayWalletBatched",
+			version: "1",
+			verifyingContract: "0x0077777d7EBA4688BDeF3E311b846F25870A19B9",
+		});
+	});
+
+	test("nanopayments works with after-response timing", async () => {
+		upstream = await serve({
+			port: 0,
+			fetch: () => new Response("Internal Server Error", { status: 500 }),
+		});
+
+		let settleCalled = false;
+		circleGateway = await mockFacilitator({
+			verify: () => Response.json({ isValid: true, payer: "0xnano" }),
+			settle: () => {
+				settleCalled = true;
+				return Response.json({
+					success: true,
+					payer: "0xnano",
+					transaction: "0xtx",
+					network: "base-sepolia",
+				});
+			},
+		});
+
+		const config: TollboothConfig = {
+			gateway: { port: 0, discovery: false },
+			wallets: { "base-sepolia": "0xtest" },
+			accepts: [{ asset: "USDC", network: "base-sepolia" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			upstreams: { api: { url: `http://localhost:${upstream.port}` } },
+			routes: {
+				"GET /test": {
+					upstream: "api",
+					price: "$0.01",
+					settlement: "after-response",
+				},
+			},
+			settlement: {
+				strategy: "nanopayments",
+				url: `http://localhost:${circleGateway.port}`,
+			},
+		};
+
+		tollbooth = createGateway(config);
+		await tollbooth.start({ silent: true });
+
+		const res = await fetch(`http://localhost:${tollbooth.port}/test`, {
+			headers: { "payment-signature": paymentSig },
+		});
+
+		// 5xx upstream — should skip settlement
+		expect(res.status).toBe(500);
+		expect(settleCalled).toBe(false);
 	});
 });

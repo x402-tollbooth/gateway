@@ -93,9 +93,10 @@ const facilitatorSchema = z.union([z.string().url(), facilitatorMappingSchema]);
 
 const settlementStrategySchema = z
 	.object({
-		strategy: z.enum(["facilitator", "custom"]),
+		strategy: z.enum(["facilitator", "custom", "nanopayments"]),
 		url: z.string().url().optional(),
 		module: z.string().min(1).optional(),
+		network: z.enum(["testnet", "mainnet"]).optional(),
 	})
 	.strict()
 	.refine(

@@ -167,8 +167,9 @@ describe("paid route without payment header", () => {
 
 		const header = res.headers.get("payment-required");
 		expect(header).toBeTruthy();
+		if (!header) throw new Error("missing header");
 
-		const requirements = decodePaymentRequired(header!) as Array<{
+		const requirements = decodePaymentRequired(header) as Array<{
 			scheme: string;
 			network: string;
 			asset: string;
