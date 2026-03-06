@@ -100,10 +100,12 @@ export async function initSettlementStrategy(config: {
 			}
 		}
 
-		return new NanopaymentSettlement({
+		const strategy = new NanopaymentSettlement({
 			network: config.settlement.network,
 			url: config.settlement.url,
 		});
+		await strategy.init();
+		return strategy;
 	}
 
 	if (config.settlement?.strategy === "custom") {

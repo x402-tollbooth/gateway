@@ -28,13 +28,21 @@ export function serve(options: {
 export function mockFacilitator(options: {
 	verify: (req: Request) => Response | Promise<Response>;
 	settle: (req: Request) => Response | Promise<Response>;
+	supported?: (req: Request) => Response | Promise<Response>;
 }): Promise<TestServer> {
 	return serve({
 		port: 0,
 		async fetch(req) {
 			const url = new URL(req.url);
-			if (url.pathname === "/verify") return options.verify(req);
-			if (url.pathname === "/settle") return options.settle(req);
+			if (url.pathname === "/verify" || url.pathname === "/v1/x402/verify")
+				return options.verify(req);
+			if (url.pathname === "/settle" || url.pathname === "/v1/x402/settle")
+				return options.settle(req);
+			if (
+				url.pathname === "/v1/x402/supported" &&
+				options.supported
+			)
+				return options.supported(req);
 			return new Response("Not found", { status: 404 });
 		},
 	});

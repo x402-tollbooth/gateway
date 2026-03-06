@@ -34,7 +34,7 @@ export function buildPaymentRequirements(
 	description: string,
 	timeout: number,
 	accepts: AcceptedPayment[],
-	extraOverride?: { name: string; version: string },
+	extraOverride?: { name: string; version: string; verifyingContract?: string },
 ): PaymentRequirementsPayload[] {
 	const payTo =
 		typeof price.payTo === "string"

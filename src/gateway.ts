@@ -43,10 +43,7 @@ import {
 	createFacilitatorStrategy,
 	initSettlementStrategy,
 } from "./settlement/loader.js";
-import {
-	NANOPAYMENT_EIP712,
-	NanopaymentSettlement,
-} from "./settlement/nanopayments.js";
+import { NanopaymentSettlement } from "./settlement/nanopayments.js";
 import {
 	buildRedisStorePrefix,
 	resolveRedisStoreConfig,
@@ -697,7 +694,7 @@ export function createGateway(
 					config.defaults.timeout,
 					accepts,
 					customStrategy instanceof NanopaymentSettlement
-						? NANOPAYMENT_EIP712
+						? customStrategy.eip712Extra
 						: undefined,
 				);
 

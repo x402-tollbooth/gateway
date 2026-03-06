@@ -293,7 +293,7 @@ export interface PaymentRequirementsPayload {
 	maxTimeoutSeconds: number;
 	asset: string;
 	// EIP-712 domain info required by the facilitator to verify the signature
-	extra?: { name: string; version: string };
+	extra?: { name: string; version: string; verifyingContract?: string };
 }
 
 // ── Settlement Strategy ─────────────────────────────────────────────────────

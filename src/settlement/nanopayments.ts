@@ -7,9 +7,12 @@ import type {
 import { PaymentError } from "../x402/middleware.js";
 
 /**
- * EIP-712 domain used by Circle's GatewayWalletBatched contract.
+ * EIP-712 domain name/version used by Circle's GatewayWalletBatched contract.
  * Clients sign `TransferWithAuthorization` against this domain
  * instead of the standard per-token EIP-712 domain.
+ *
+ * The full extra object (including `verifyingContract`) is discovered at
+ * startup via `/v1/x402/supported` and exposed by the settlement instance.
  */
 export const NANOPAYMENT_EIP712 = {
 	name: "GatewayWalletBatched",
@@ -24,6 +27,25 @@ const GATEWAY_URL = {
 	mainnet: "https://gateway-api.circle.com",
 } as const;
 
+/**
+ * Map tollbooth network names to CAIP-2 chain identifiers.
+ * Circle Gateway requires CAIP-2 format (e.g. "eip155:84532").
+ */
+const NETWORK_TO_CAIP2: Record<string, string> = {
+	"base-sepolia": "eip155:84532",
+	base: "eip155:8453",
+	"ethereum-sepolia": "eip155:11155111",
+	ethereum: "eip155:1",
+	"arbitrum-sepolia": "eip155:421614",
+	arbitrum: "eip155:42161",
+	"optimism-sepolia": "eip155:11155420",
+	optimism: "eip155:10",
+	"polygon-amoy": "eip155:80002",
+	polygon: "eip155:137",
+	"avalanche-fuji": "eip155:43113",
+	avalanche: "eip155:43114",
+};
+
 export type NanopaymentNetwork = "testnet" | "mainnet";
 
 export interface NanopaymentConfig {
@@ -36,6 +58,13 @@ interface NanopaymentVerification extends SettlementVerification {
 	requirement: PaymentRequirementsPayload;
 	requirementIndex: number;
 	gatewayUrl: string;
+}
+
+interface SupportedKind {
+	x402Version: number;
+	scheme: string;
+	network: string;
+	extra?: { name?: string; version?: string; verifyingContract?: string };
 }
 
 interface VerifyResponse {
@@ -65,12 +94,49 @@ interface SettleResponse {
 export class NanopaymentSettlement implements SettlementStrategy {
 	private readonly gatewayUrl: string;
 
+	/**
+	 * Full EIP-712 extra object for 402 responses, including verifyingContract
+	 * discovered from `/v1/x402/supported`. Falls back to name+version only
+	 * if the supported endpoint is unavailable.
+	 */
+	eip712Extra: { name: string; version: string; verifyingContract?: string } = {
+		...NANOPAYMENT_EIP712,
+	};
+
 	constructor(config?: NanopaymentConfig) {
 		if (config?.url) {
 			this.gatewayUrl = config.url.replace(/\/+$/, "");
 		} else {
 			const net = config?.network ?? "testnet";
 			this.gatewayUrl = GATEWAY_URL[net];
+		}
+	}
+
+	/**
+	 * Discover `verifyingContract` from Circle Gateway's `/v1/x402/supported`
+	 * endpoint. Call once after construction; safe to skip (402 responses will
+	 * omit verifyingContract and clients must discover it themselves).
+	 */
+	async init(): Promise<void> {
+		try {
+			const url = `${this.gatewayUrl}/v1/x402/supported`;
+			const res = await fetch(url);
+			if (!res.ok) return;
+			const data = (await res.json()) as { kinds?: SupportedKind[] };
+			const kind = data.kinds?.find(
+				(k) =>
+					k.extra?.name === NANOPAYMENT_EIP712.name &&
+					k.extra?.version === NANOPAYMENT_EIP712.version &&
+					k.extra?.verifyingContract,
+			);
+			if (kind?.extra?.verifyingContract) {
+				this.eip712Extra = {
+					...NANOPAYMENT_EIP712,
+					verifyingContract: kind.extra.verifyingContract,
+				};
+			}
+		} catch {
+			// Non-fatal — verifyingContract will be omitted from 402 responses.
 		}
 	}
 
@@ -83,11 +149,14 @@ export class NanopaymentSettlement implements SettlementStrategy {
 		for (let i = 0; i < requirements.length; i++) {
 			const req = requirements[i];
 
+			const gatewayReq = toGatewayRequirements(req);
+			const gatewayPayload = toGatewayPayload(payment, req);
+
 			let result: VerifyResponse;
 			try {
-				result = await this.callGateway<VerifyResponse>("/verify", {
-					paymentPayload: payment,
-					paymentRequirements: req,
+				result = await this.callGateway<VerifyResponse>("/v1/x402/verify", {
+					paymentPayload: gatewayPayload,
+					paymentRequirements: gatewayReq,
 				});
 			} catch (err) {
 				lastError = new PaymentError(
@@ -135,12 +204,14 @@ export class NanopaymentSettlement implements SettlementStrategy {
 		}
 
 		const { paymentPayload, requirement } = verification;
+		const gatewayReq = toGatewayRequirements(requirement);
+		const gatewayPayload = toGatewayPayload(paymentPayload, requirement);
 
 		let result: SettleResponse;
 		try {
-			result = await this.callGateway<SettleResponse>("/settle", {
-				paymentPayload,
-				paymentRequirements: requirement,
+			result = await this.callGateway<SettleResponse>("/v1/x402/settle", {
+				paymentPayload: gatewayPayload,
+				paymentRequirements: gatewayReq,
 			});
 		} catch (err) {
 			throw new PaymentError(
@@ -193,6 +264,57 @@ export class NanopaymentSettlement implements SettlementStrategy {
 
 		return (await response.json()) as T;
 	}
+}
+
+/**
+ * Convert tollbooth payment requirements to Circle Gateway v2 format.
+ * - Translates network name to CAIP-2 (e.g. "base-sepolia" → "eip155:84532")
+ * - Renames `maxAmountRequired` → `amount`
+ */
+function toGatewayRequirements(
+	req: PaymentRequirementsPayload,
+): Record<string, unknown> {
+	const network = NETWORK_TO_CAIP2[req.network] ?? req.network;
+	return {
+		scheme: req.scheme,
+		network,
+		amount: req.maxAmountRequired,
+		payTo: req.payTo,
+		maxTimeoutSeconds: req.maxTimeoutSeconds,
+		asset: req.asset,
+		extra: req.extra,
+	};
+}
+
+/**
+ * Enrich the client's payment payload with `resource` and `accepted` fields
+ * that Circle Gateway's v2 API requires.
+ */
+function toGatewayPayload(
+	payment: unknown,
+	req: PaymentRequirementsPayload,
+): unknown {
+	const base =
+		typeof payment === "object" && payment !== null ? payment : {};
+	const network = NETWORK_TO_CAIP2[req.network] ?? req.network;
+	return {
+		...base,
+		// Circle Gateway requires these top-level fields in paymentPayload
+		resource: (base as Record<string, unknown>).resource ?? {
+			url: req.resource,
+			description: req.description,
+			mimeType: "application/json",
+		},
+		accepted: (base as Record<string, unknown>).accepted ?? {
+			scheme: req.scheme,
+			network,
+			amount: req.maxAmountRequired,
+			payTo: req.payTo,
+			maxTimeoutSeconds: req.maxTimeoutSeconds,
+			asset: req.asset,
+			extra: req.extra,
+		},
+	};
 }
 
 function isNanopaymentVerification(
