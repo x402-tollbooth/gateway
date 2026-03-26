@@ -40,15 +40,34 @@ export function encodePaymentResponse(response: unknown): string {
 }
 
 /**
- * Extract the payer wallet address from a base64-encoded payment-signature header.
- * Checks common x402 payload shapes: payload.authorization.from, from, payer.
+ * Extract the payer wallet address from a payment header string.
+ *
+ * Handles both formats:
+ * - x402: base64-encoded JSON (from `payment-signature` header)
+ * - MPP: `Payment id="...", payload="..."` (from `Authorization` header)
+ *
+ * Checks common payload shapes: payload.authorization.from, from, payer.
  * Returns undefined if the header cannot be parsed or doesn't contain a payer.
  */
 export function extractPayerFromHeader(
 	paymentHeader: string,
 ): string | undefined {
 	try {
-		const payload = JSON.parse(atob(paymentHeader)) as Record<string, unknown>;
+		let payload: Record<string, unknown>;
+
+		if (paymentHeader.startsWith("Payment ")) {
+			// MPP format: parse the payload parameter
+			const payloadMatch = paymentHeader.match(/payload="([^"]+)"/);
+			if (!payloadMatch) return undefined;
+			// base64url decode
+			let base64 = payloadMatch[1].replace(/-/g, "+").replace(/_/g, "/");
+			while (base64.length % 4) base64 += "=";
+			payload = JSON.parse(atob(base64)) as Record<string, unknown>;
+		} else {
+			// x402 format: base64-encoded JSON
+			payload = JSON.parse(atob(paymentHeader)) as Record<string, unknown>;
+		}
+
 		return (
 			getNestedString(payload, "payload", "authorization", "from") ??
 			getNestedString(payload, "from") ??

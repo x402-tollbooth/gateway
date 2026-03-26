@@ -91,17 +91,30 @@ const facilitatorMappingSchema = z.object({
 
 const facilitatorSchema = z.union([z.string().url(), facilitatorMappingSchema]);
 
+const mppMethodSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("tempo") }).strict(),
+	z
+		.object({ type: z.literal("stripe"), secretKey: z.string().min(1) })
+		.strict(),
+]);
+
 const settlementStrategySchema = z
 	.object({
-		strategy: z.enum(["facilitator", "custom", "nanopayments"]),
+		strategy: z.enum(["facilitator", "custom", "nanopayments", "mpp"]),
 		url: z.string().url().optional(),
 		module: z.string().min(1).optional(),
 		network: z.enum(["testnet", "mainnet"]).optional(),
+		methods: z.array(mppMethodSchema).min(1).optional(),
 	})
 	.strict()
 	.refine(
 		(data) => data.strategy !== "custom" || !!data.module,
 		"Custom settlement strategy requires a 'module' path",
+	)
+	.refine(
+		(data) =>
+			data.strategy !== "mpp" || (data.methods && data.methods.length > 0),
+		"MPP settlement strategy requires at least one method",
 	);
 
 const redisUrlSchema = z
@@ -190,10 +203,15 @@ const corsSchema = z
 			.default(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]),
 		allowedHeaders: z
 			.array(z.string().min(1))
-			.default(["content-type", "payment-signature"]),
+			.default(["content-type", "payment-signature", "authorization"]),
 		exposedHeaders: z
 			.array(z.string().min(1))
-			.default(["payment-required", "payment-response"]),
+			.default([
+				"payment-required",
+				"payment-response",
+				"www-authenticate",
+				"payment-receipt",
+			]),
 		credentials: z.boolean().default(false),
 		maxAge: z.number().int().nonnegative().optional(),
 	})

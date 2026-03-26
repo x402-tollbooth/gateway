@@ -1,5 +1,7 @@
 import { createRequire } from "node:module";
 import { log } from "../logger.js";
+import { StripeMethod } from "../mpp/stripe.js";
+import { TempoMethod } from "../mpp/tempo.js";
 import type {
 	AcceptedPayment,
 	FacilitatorMapping,
@@ -7,8 +9,12 @@ import type {
 	SettlementStrategy,
 	SettlementStrategyConfig,
 } from "../types.js";
-import { resolveFacilitatorUrl } from "../x402/facilitator.js";
+import {
+	DEFAULT_FACILITATOR,
+	resolveFacilitatorUrl,
+} from "../x402/facilitator.js";
 import { FacilitatorSettlement } from "./facilitator.js";
+import { MppSettlement } from "./mpp.js";
 import { NanopaymentSettlement } from "./nanopayments.js";
 
 const strategyCache = new Map<string, SettlementStrategy>();
@@ -106,6 +112,34 @@ export async function initSettlementStrategy(config: {
 		});
 		await strategy.init();
 		return strategy;
+	}
+
+	if (config.settlement?.strategy === "mpp") {
+		if (!config.settlement.methods?.length) {
+			throw new Error("MPP settlement strategy requires at least one method");
+		}
+
+		// Resolve facilitator URLs for tempo methods
+		const facilitatorUrl =
+			config.settlement.url ??
+			(typeof config.facilitator === "string"
+				? config.facilitator
+				: config.facilitator?.default) ??
+			DEFAULT_FACILITATOR;
+
+		const methods = config.settlement.methods.map((m) => {
+			if (m.type === "tempo") {
+				return new TempoMethod([{ url: facilitatorUrl }]);
+			}
+			if (m.type === "stripe") {
+				return new StripeMethod({ secretKey: m.secretKey });
+			}
+			throw new Error(
+				`Unknown MPP method type: ${(m as { type: string }).type}`,
+			);
+		});
+
+		return new MppSettlement(methods);
 	}
 
 	if (config.settlement?.strategy === "custom") {

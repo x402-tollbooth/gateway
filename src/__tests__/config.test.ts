@@ -185,8 +185,13 @@ describe("tollboothConfigSchema", () => {
 			expect(result.data.gateway.cors).toEqual({
 				allowedOrigins: ["https://app.example.com"],
 				allowedMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"],
-				allowedHeaders: ["content-type", "payment-signature"],
-				exposedHeaders: ["payment-required", "payment-response"],
+				allowedHeaders: ["content-type", "payment-signature", "authorization"],
+				exposedHeaders: [
+					"payment-required",
+					"payment-response",
+					"www-authenticate",
+					"payment-receipt",
+				],
 				credentials: false,
 			});
 		}

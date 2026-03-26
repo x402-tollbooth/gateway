@@ -1,3 +1,5 @@
+import { serializeChallenge } from "../mpp/headers.js";
+import type { MppChallenge } from "../mpp/types.js";
 import type { ResolvedPrice } from "../pricing/resolver.js";
 import type { AcceptedPayment, PaymentRequirementsPayload } from "../types.js";
 import { encodePaymentRequired, HEADERS } from "./headers.js";
@@ -60,22 +62,32 @@ export function buildPaymentRequirements(
 
 /**
  * Create a 402 Payment Required response.
+ *
+ * When `mppChallenges` is provided, MPP `WWW-Authenticate: Payment` headers
+ * are added alongside the x402 `payment-required` header for dual-protocol
+ * compatibility.
  */
 export function createPaymentRequiredResponse(
 	requirements: PaymentRequirementsPayload[],
+	mppChallenges?: MppChallenge[],
 ): Response {
 	const body = JSON.stringify({
 		accepts: requirements.map((r) => ({ paymentRequirements: r })),
 	});
 	const encoded = encodePaymentRequired(requirements);
 
-	return new Response(body, {
-		status: 402,
-		headers: {
-			"Content-Type": "application/json",
-			[HEADERS.PAYMENT_REQUIRED]: encoded,
-		},
+	const headers = new Headers({
+		"Content-Type": "application/json",
+		[HEADERS.PAYMENT_REQUIRED]: encoded,
 	});
+
+	if (mppChallenges) {
+		for (const challenge of mppChallenges) {
+			headers.append("WWW-Authenticate", serializeChallenge(challenge));
+		}
+	}
+
+	return new Response(body, { status: 402, headers });
 }
 
 export class PaymentError extends Error {
