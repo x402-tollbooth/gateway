@@ -13,6 +13,11 @@ import {
 	type SettlementStrategyLabel,
 	TollboothPrometheusMetrics,
 } from "./metrics/prometheus.js";
+import {
+	isMppAuthorization,
+	MPP_HEADERS,
+	parseCredential,
+} from "./mpp/headers.js";
 import { resolveClientIp } from "./network/client-ip.js";
 import { extractModel, resolveOpenAIPrice } from "./openai/handler.js";
 import { buildExportSpec, importOpenAPIRoutes } from "./openapi/spec.js";
@@ -43,6 +48,7 @@ import {
 	createFacilitatorStrategy,
 	initSettlementStrategy,
 } from "./settlement/loader.js";
+import { MppSettlement } from "./settlement/mpp.js";
 import { NanopaymentSettlement } from "./settlement/nanopayments.js";
 import {
 	buildRedisStorePrefix,
@@ -698,15 +704,31 @@ export function createGateway(
 						: undefined,
 				);
 
-				// ── Extract payment from request ────────────────────────────────
-				const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
+				// ── Extract payment from request (MPP or x402) ─────────────────
+				const authHeader = request.headers.get("authorization") ?? "";
+				const mppCredential = isMppAuthorization(authHeader)
+					? parseCredential(authHeader)
+					: null;
+				const paymentHeader = mppCredential
+					? mppCredential.rawHeader
+					: request.headers.get(HEADERS.PAYMENT_SIGNATURE);
+
+				// Build MPP challenges if strategy is MPP (for 402 responses)
+				const mppChallenges =
+					!paymentHeader && customStrategy instanceof MppSettlement
+						? await customStrategy.buildChallenges(requirements, routeKey)
+						: undefined;
+
 				if (!paymentHeader && timeSessionDurationMs == null) {
 					recordPaymentOutcome("missing");
-					return finish(routeKey, createPaymentRequiredResponse(requirements));
+					return finish(
+						routeKey,
+						createPaymentRequiredResponse(requirements, mppChallenges),
+					);
 				}
-				const payment = paymentHeader
-					? decodePaymentSignature(paymentHeader)
-					: null;
+				const payment =
+					mppCredential?.payload ??
+					(paymentHeader ? decodePaymentSignature(paymentHeader) : null);
 
 				// ── Resolve settlement strategy ─────────────────────────────────
 				const strategy =
@@ -785,11 +807,17 @@ export function createGateway(
 				// No payment header → require payment
 				if (!paymentHeader) {
 					recordPaymentOutcome("missing");
-					return finish(routeKey, createPaymentRequiredResponse(requirements));
+					return finish(
+						routeKey,
+						createPaymentRequiredResponse(requirements, mppChallenges),
+					);
 				}
 				if (!payment) {
 					recordPaymentOutcome("rejected");
-					return finish(routeKey, createPaymentRequiredResponse(requirements));
+					return finish(
+						routeKey,
+						createPaymentRequiredResponse(requirements, mppChallenges),
+					);
 				}
 
 				// ── Verification cache config ────────────────────────────────────
@@ -1233,10 +1261,18 @@ export function createGateway(
 		const responseHeaders = new Headers(finalResponse.headers);
 
 		if (settlement) {
+			// x402 receipt header
 			responseHeaders.set(
 				HEADERS.PAYMENT_RESPONSE,
 				encodePaymentResponse(settlement),
 			);
+			// MPP receipt header (when using MPP strategy)
+			if (customStrategy instanceof MppSettlement) {
+				responseHeaders.set(
+					MPP_HEADERS.PAYMENT_RECEIPT,
+					customStrategy.buildReceiptHeader(undefined, settlement),
+				);
+			}
 		}
 
 		if (settlementSkippedReason) {
@@ -1459,9 +1495,11 @@ export function createGateway(
 		cacheConfig: VerificationCacheConfig | undefined,
 	): Promise<SettlementVerification> {
 		const isFacilitator = strategy instanceof FacilitatorSettlement;
+		const isMpp = strategy instanceof MppSettlement;
+		const isCacheable = isFacilitator || isMpp;
 
-		// Try cache (only for facilitator strategy)
-		if (isFacilitator && cacheKey && cacheConfig) {
+		// Try cache (facilitator and MPP strategies)
+		if (isCacheable && cacheKey && cacheConfig) {
 			const cached = await verificationCacheStore.get(cacheKey);
 			if (cached) {
 				metrics?.incCacheHit(routeLabel);
@@ -1486,9 +1524,11 @@ export function createGateway(
 		}
 		const verification = await strategy.verify(payment, requirements);
 
-		// Cache successful verification (facilitator only)
-		if (isFacilitator && cacheKey && cacheConfig) {
-			const idx = FacilitatorSettlement.getRequirementIndex(verification);
+		// Cache successful verification (facilitator and MPP)
+		if (isCacheable && cacheKey && cacheConfig) {
+			const idx = isFacilitator
+				? FacilitatorSettlement.getRequirementIndex(verification)
+				: MppSettlement.getRequirementIndex(verification);
 			if (idx !== undefined) {
 				const ttlMs = parseWindow(cacheConfig.ttl);
 				await verificationCacheStore.set(

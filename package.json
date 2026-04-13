@@ -35,16 +35,17 @@
   },
   "dependencies": {
     "ioredis": "^5.4.0",
+    "stripe": "^21.0.0",
     "yaml": "^2.7.0",
     "zod": "~3.24.0"
   },
   "devDependencies": {
-    "viem": "^2.0.0",
     "@biomejs/biome": "^2.3.14",
     "@types/node": "^20.0.0",
     "esbuild": "^0.24.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
+    "viem": "^2.0.0",
     "vitest": "^3.0.0"
   },
   "keywords": [

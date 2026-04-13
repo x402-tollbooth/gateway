@@ -1,11 +1,28 @@
+import { isMppAuthorization, parseCredential } from "../mpp/headers.js";
 import { decodePaymentSignature, HEADERS } from "./headers.js";
 
 /**
- * Decode the payer address from the x402 payment-signature header.
+ * Decode the payer address from the payment header.
+ *
+ * Checks MPP `Authorization: Payment` first, then falls back to
+ * x402 `payment-signature`.
  */
 export function extractPayerFromPaymentHeader(
 	request: Request,
 ): string | undefined {
+	// MPP: Authorization: Payment id="...", payload="..."
+	const authHeader = request.headers.get("authorization");
+	if (authHeader && isMppAuthorization(authHeader)) {
+		const cred = parseCredential(authHeader);
+		if (cred?.payload) {
+			const payer = extractPayerFromPayload(
+				cred.payload as Record<string, unknown>,
+			);
+			if (payer) return payer;
+		}
+	}
+
+	// x402: payment-signature
 	const paymentHeader = request.headers.get(HEADERS.PAYMENT_SIGNATURE);
 	if (!paymentHeader) {
 		return undefined;
@@ -16,15 +33,23 @@ export function extractPayerFromPaymentHeader(
 			string,
 			unknown
 		>;
-		const payer =
-			getNestedString(payload, "payload", "authorization", "from") ??
-			getNestedString(payload, "from") ??
-			getNestedString(payload, "payer");
-
-		return payer ? payer.toLowerCase() : undefined;
+		return extractPayerFromPayload(payload);
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * Extract payer address from a decoded payment payload.
+ */
+function extractPayerFromPayload(
+	payload: Record<string, unknown>,
+): string | undefined {
+	const payer =
+		getNestedString(payload, "payload", "authorization", "from") ??
+		getNestedString(payload, "from") ??
+		getNestedString(payload, "payer");
+	return payer ? payer.toLowerCase() : undefined;
 }
 
 function getNestedString(
