@@ -95,3 +95,51 @@ jobs:
       - run: npm run build
       - name: E2E smoke test (${{ matrix.runtime }} ${{ matrix.node-version }})
         run: bash scripts/e2e-runtime.sh ${{ matrix.runtime }}
+
+  pkg-pr-new:
+    if: github.event_name == 'pull_request'
+    needs:
+      - lint
+      - typecheck
+      - build
+      - test-node
+      - test-bun
+      - e2e-runtime
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.publish.outputs.sha }}
+      urls: ${{ steps.publish.outputs.urls }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - id: publish
+        name: Publish PR preview package
+        run: npx pkg-pr-new publish --bin
+
+  preview-e2e:
+    if: github.event_name == 'pull_request'
+    needs: pkg-pr-new
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install preview package into throwaway consumer dir
+        run: |
+          mkdir -p /tmp/tollbooth-preview
+          cd /tmp/tollbooth-preview
+          npm init -y
+          npm install ${{ needs.pkg-pr-new.outputs.urls }}
+      - name: Preview CLI smoke (installed tollbooth bin)
+        run: bash scripts/e2e-runtime.sh node /tmp/tollbooth-preview/node_modules/.bin/tollbooth
+      - name: Preview library smoke (imports from consumer dir)
+        run: |
+          cp scripts/e2e-preview-library.mjs /tmp/tollbooth-preview/
+          cd /tmp/tollbooth-preview
+          node e2e-preview-library.mjs
