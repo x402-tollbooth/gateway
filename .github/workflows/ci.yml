@@ -95,3 +95,24 @@ jobs:
       - run: npm run build
       - name: E2E smoke test (${{ matrix.runtime }} ${{ matrix.node-version }})
         run: bash scripts/e2e-runtime.sh ${{ matrix.runtime }}
+
+  pkg-pr-new:
+    if: github.event_name == 'pull_request'
+    needs:
+      - lint
+      - typecheck
+      - build
+      - test-node
+      - test-bun
+      - e2e-runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Publish PR preview package
+        run: npx pkg-pr-new publish --bin
