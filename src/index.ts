@@ -5,6 +5,7 @@ export { tollboothConfigSchema } from "./config/schema.js";
 export { createGateway } from "./gateway.js";
 export { FacilitatorSettlement } from "./settlement/facilitator.js";
 export { NanopaymentSettlement } from "./settlement/nanopayments.js";
+export { TempoSettlement } from "./settlement/tempo.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +50,9 @@ export type {
 	StoreBackend,
 	StoreSelectionConfig,
 	StoresConfig,
+	TempoRecurringConfig,
+	TempoRecurringInterval,
+	TempoSettlementConfig,
 	TimeSessionStore,
 	TollboothConfig,
 	TollboothError,

@@ -16,6 +16,7 @@ import {
 import { FacilitatorSettlement } from "./facilitator.js";
 import { MppSettlement } from "./mpp.js";
 import { NanopaymentSettlement } from "./nanopayments.js";
+import { TempoSettlement } from "./tempo.js";
 
 const strategyCache = new Map<string, SettlementStrategy>();
 
@@ -112,6 +113,37 @@ export async function initSettlementStrategy(config: {
 		});
 		await strategy.init();
 		return strategy;
+	}
+
+	if (config.settlement?.strategy === "tempo") {
+		if (!config.settlement.tempo) {
+			throw new Error(
+				"Tempo settlement strategy requires a 'tempo' config block",
+			);
+		}
+
+		// Warn about ignored facilitator overrides
+		if (config.facilitator) {
+			log.warn("tempo_strategy_ignores_facilitator", {
+				msg: "Top-level 'facilitator' is ignored when settlement.strategy is 'tempo'",
+			});
+		}
+		if (config.routes) {
+			for (const [key, route] of Object.entries(config.routes)) {
+				if (route.facilitator) {
+					log.warn("tempo_strategy_ignores_facilitator", {
+						route: key,
+						msg: "Route-level 'facilitator' is ignored when settlement.strategy is 'tempo'",
+					});
+				}
+			}
+		}
+
+		const tempoConfig = {
+			...config.settlement.tempo,
+			url: config.settlement.tempo.url ?? config.settlement.url,
+		};
+		return new TempoSettlement(tempoConfig);
 	}
 
 	if (config.settlement?.strategy === "mpp") {
