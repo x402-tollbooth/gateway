@@ -98,13 +98,32 @@ const mppMethodSchema = z.discriminatedUnion("type", [
 		.strict(),
 ]);
 
+const tempoRecurringSchema = z
+	.object({
+		interval: z.enum(["daily", "weekly", "monthly", "yearly"]),
+		autoPay: z.boolean().optional(),
+	})
+	.strict();
+
+const tempoSettlementConfigSchema = z
+	.object({
+		network: z.enum(["testnet", "mainnet"]).optional(),
+		token: z.string().min(1).optional(),
+		recipient: z.string().min(1),
+		url: z.string().url().optional(),
+		recurring: tempoRecurringSchema.optional(),
+		memo: z.record(z.string()).optional(),
+	})
+	.strict();
+
 const settlementStrategySchema = z
 	.object({
-		strategy: z.enum(["facilitator", "custom", "nanopayments", "mpp"]),
+		strategy: z.enum(["facilitator", "custom", "nanopayments", "mpp", "tempo"]),
 		url: z.string().url().optional(),
 		module: z.string().min(1).optional(),
 		network: z.enum(["testnet", "mainnet"]).optional(),
 		methods: z.array(mppMethodSchema).min(1).optional(),
+		tempo: tempoSettlementConfigSchema.optional(),
 	})
 	.strict()
 	.refine(
@@ -115,6 +134,10 @@ const settlementStrategySchema = z
 		(data) =>
 			data.strategy !== "mpp" || (data.methods && data.methods.length > 0),
 		"MPP settlement strategy requires at least one method",
+	)
+	.refine(
+		(data) => data.strategy !== "tempo" || !!data.tempo?.recipient,
+		"Tempo settlement strategy requires 'tempo.recipient'",
 	);
 
 const redisUrlSchema = z
