@@ -56,6 +56,25 @@ describe("MemoryVerificationCacheStore", () => {
 		const result = await store.get("key1");
 		expect(result).toEqual({ requirementIndex: 2 });
 	});
+
+	test("claim succeeds once per key", async () => {
+		expect(await store.claim("pi_1", 60_000)).toBe(true);
+		expect(await store.claim("pi_1", 60_000)).toBe(false);
+		expect(await store.claim("pi_2", 60_000)).toBe(true);
+	});
+
+	test("concurrent claims: exactly one wins", async () => {
+		const results = await Promise.all(
+			Array.from({ length: 10 }, () => store.claim("pi_1", 60_000)),
+		);
+		expect(results.filter(Boolean)).toHaveLength(1);
+	});
+
+	test("claim can be retaken after TTL", async () => {
+		expect(await store.claim("pi_1", 1)).toBe(true);
+		await new Promise((r) => setTimeout(r, 5));
+		expect(await store.claim("pi_1", 60_000)).toBe(true);
+	});
 });
 
 describe("RedisVerificationCacheStore", () => {
@@ -84,6 +103,16 @@ describe("RedisVerificationCacheStore", () => {
 		await storeA.set("key1", { requirementIndex: 2 }, 10);
 		await new Promise((r) => setTimeout(r, 20));
 		expect(await storeB.get("key1")).toBeUndefined();
+	});
+
+	test("claims are shared across instances (SET NX)", async () => {
+		expect(await storeA.claim("pi_1", 60_000)).toBe(true);
+		expect(await storeB.claim("pi_1", 60_000)).toBe(false);
+	});
+
+	test("claims do not collide with cache entries", async () => {
+		await storeA.set("pi_1", { requirementIndex: 0 }, 60_000);
+		expect(await storeA.claim("pi_1", 60_000)).toBe(true);
 	});
 });
 

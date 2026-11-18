@@ -17,7 +17,12 @@ export class MockRedisClient {
 		value: string,
 		option?: "PX",
 		ttlMs?: number,
-	): Promise<"OK"> {
+		mode?: "NX",
+	): Promise<"OK" | null> {
+		if (mode === "NX") {
+			this.evictExpired(key);
+			if (this.store.has(key)) return null;
+		}
 		const expiresAt =
 			option === "PX" && ttlMs != null ? Date.now() + ttlMs : undefined;
 		this.store.set(key, { value, expiresAt });

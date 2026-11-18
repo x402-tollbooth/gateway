@@ -18,6 +18,7 @@ export type {
 	HookContext,
 	HookResult,
 	MatchRule,
+	PaymentClaimStore,
 	PaymentRequirementsPayload,
 	PayToSplit,
 	PriceResolvedHook,
