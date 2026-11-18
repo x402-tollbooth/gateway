@@ -5,6 +5,7 @@ import { TempoMethod } from "../mpp/tempo.js";
 import type {
 	AcceptedPayment,
 	FacilitatorMapping,
+	PaymentClaimStore,
 	RouteConfig,
 	SettlementStrategy,
 	SettlementStrategyConfig,
@@ -84,11 +85,17 @@ export function createFacilitatorStrategy(
  * Returns `null` for the default facilitator strategy (which is created
  * per-request because facilitator URLs depend on the matched route).
  */
-export async function initSettlementStrategy(config: {
-	settlement?: SettlementStrategyConfig;
-	facilitator?: string | FacilitatorMapping;
-	routes?: Record<string, RouteConfig>;
-}): Promise<SettlementStrategy | null> {
+export async function initSettlementStrategy(
+	config: {
+		settlement?: SettlementStrategyConfig;
+		facilitator?: string | FacilitatorMapping;
+		routes?: Record<string, RouteConfig>;
+	},
+	deps?: {
+		/** Marks MPP Stripe PaymentIntents as spent (replay protection). */
+		paymentClaimStore?: PaymentClaimStore;
+	},
+): Promise<SettlementStrategy | null> {
 	if (config.settlement?.strategy === "nanopayments") {
 		// Warn about ignored facilitator overrides
 		if (config.facilitator) {
@@ -164,7 +171,10 @@ export async function initSettlementStrategy(config: {
 				return new TempoMethod([{ url: facilitatorUrl }]);
 			}
 			if (m.type === "stripe") {
-				return new StripeMethod({ secretKey: m.secretKey });
+				return new StripeMethod({
+					secretKey: m.secretKey,
+					claimStore: deps?.paymentClaimStore,
+				});
 			}
 			throw new Error(
 				`Unknown MPP method type: ${(m as { type: string }).type}`,
