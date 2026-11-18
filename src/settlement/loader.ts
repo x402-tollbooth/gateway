@@ -90,6 +90,7 @@ export async function initSettlementStrategy(
 		settlement?: SettlementStrategyConfig;
 		facilitator?: string | FacilitatorMapping;
 		routes?: Record<string, RouteConfig>;
+		wallets?: Record<string, string>;
 	},
 	deps?: {
 		/** Marks MPP Stripe PaymentIntents as spent (replay protection). */
@@ -144,6 +145,20 @@ export async function initSettlementStrategy(
 					});
 				}
 			}
+		}
+
+		// Funds go to the route's payTo (from `wallets`); `tempo.recipient` is
+		// only used for attribution and memos. Flag a mismatch so receipts
+		// don't name an address that isn't actually being paid.
+		const recipient = config.settlement.tempo.recipient.toLowerCase();
+		const walletAddresses = Object.values(config.wallets ?? {}).map((w) =>
+			w.toLowerCase(),
+		);
+		if (!walletAddresses.includes(recipient)) {
+			log.warn("tempo_recipient_not_in_wallets", {
+				recipient: config.settlement.tempo.recipient,
+				hint: "settlement.tempo.recipient does not match any address in 'wallets'. Payments go to the wallet address; recipient is only used in attribution and memos.",
+			});
 		}
 
 		const tempoConfig = {

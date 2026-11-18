@@ -1,7 +1,9 @@
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createGateway } from "../gateway.js";
+import { log } from "../logger.js";
 import { getEffectiveRoutePricing } from "../pricing/config.js";
 import { extractPricePeriod } from "../pricing/parser.js";
+import { initSettlementStrategy } from "../settlement/loader.js";
 import { interpolateMemo, TempoSettlement } from "../settlement/tempo.js";
 import type {
 	PaymentRequirementsPayload,
@@ -163,6 +165,12 @@ describe("TempoSettlement — strategy unit", () => {
 		);
 	});
 
+	test("constructor throws when facilitator URL missing", () => {
+		expect(() => new TempoSettlement({ recipient: "0xMerchant" })).toThrow(
+			/facilitator URL/,
+		);
+	});
+
 	test("settle() omits memo when template is empty", async () => {
 		facilitator = await mockFacilitator({
 			verify: () => Response.json({ isValid: true, payer: "0xCustomer" }),
@@ -225,9 +233,45 @@ describe("Tempo settlement — config validation", () => {
 					network: "mainnet",
 					token: "pathUSD",
 					recipient: "0xMerchant",
+					url: "https://tempo-facilitator.example.com",
 					recurring: { interval: "monthly", autoPay: true },
 					memo: { invoice_id: "{customerId}-{period}" },
 				},
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	test("rejects tempo strategy without a facilitator URL", async () => {
+		const { tollboothConfigSchema } = await import("../config/schema.js");
+
+		const result = tollboothConfigSchema.safeParse({
+			gateway: { port: 3000 },
+			wallets: { "tempo-mainnet": "0xMerchant" },
+			accepts: [{ asset: "pathUSD", network: "tempo-mainnet" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			upstreams: { api: { url: "http://localhost:8080" } },
+			routes: { "GET /test": { upstream: "api" } },
+			settlement: { strategy: "tempo", tempo: { recipient: "0xMerchant" } },
+		});
+		expect(result.success).toBe(false);
+		expect(JSON.stringify(result.error?.issues)).toContain("facilitator URL");
+	});
+
+	test("accepts settlement.url as the Tempo facilitator URL", async () => {
+		const { tollboothConfigSchema } = await import("../config/schema.js");
+
+		const result = tollboothConfigSchema.safeParse({
+			gateway: { port: 3000 },
+			wallets: { "tempo-mainnet": "0xMerchant" },
+			accepts: [{ asset: "pathUSD", network: "tempo-mainnet" }],
+			defaults: { price: "$0.001", timeout: 60 },
+			upstreams: { api: { url: "http://localhost:8080" } },
+			routes: { "GET /test": { upstream: "api" } },
+			settlement: {
+				strategy: "tempo",
+				url: "https://tempo-facilitator.example.com",
+				tempo: { recipient: "0xMerchant" },
 			},
 		});
 		expect(result.success).toBe(true);
@@ -311,5 +355,39 @@ describe("Tempo settlement — end-to-end via gateway", () => {
 		expect(second.status).toBe(200);
 		// Recurring window still active — no second settle call.
 		expect(settleCalls).toBe(1);
+	});
+});
+
+describe("Tempo settlement — recipient vs wallets", () => {
+	async function warningsFor(wallets: Record<string, string>) {
+		const spy = vi.spyOn(log, "warn");
+		try {
+			await initSettlementStrategy({
+				wallets,
+				settlement: {
+					strategy: "tempo",
+					tempo: {
+						recipient: "0xMerchant",
+						url: "https://tempo-facilitator.example.com",
+					},
+				},
+			});
+			return spy.mock.calls.map(([msg]) => msg);
+		} finally {
+			spy.mockRestore();
+		}
+	}
+
+	test("warns when recipient is not one of the wallets", async () => {
+		const out = await warningsFor({ "tempo-mainnet": "0xSomeoneElse" });
+		expect(out).toContain("tempo_recipient_not_in_wallets");
+		// sanity: the spy does see other Tempo warnings
+		expect(out).toContain("tempo_state_creation_cost");
+	});
+
+	test("no warning when recipient matches a wallet (case-insensitive)", async () => {
+		const out = await warningsFor({ "tempo-mainnet": "0xmerchant" });
+		expect(out).toContain("tempo_state_creation_cost");
+		expect(out).not.toContain("tempo_recipient_not_in_wallets");
 	});
 });

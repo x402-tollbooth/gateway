@@ -5,6 +5,14 @@ on:
     tags:
       - 'v*'
 
+# npm Trusted Publishing: npm authenticates this workflow via GitHub OIDC,
+# so no NPM_TOKEN secret is needed. The trusted publisher is configured on
+# npmjs.com (package settings → Trusted publishing → GitHub Actions) with
+# repository x402-tollbooth/gateway and workflow filename publish.yml.
+permissions:
+  contents: read
+  id-token: write # required for OIDC
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -13,8 +21,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Trusted publishing requires Node >= 22.14 and npm >= 11.5.1
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      - run: npm install -g npm@^11.5.1
 
       - run: npm ci
 
@@ -22,6 +33,5 @@ jobs:
 
       - run: npm run build
 
+      # Provenance is generated automatically when publishing via OIDC.
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
