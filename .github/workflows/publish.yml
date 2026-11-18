@@ -33,5 +33,15 @@ jobs:
 
       - run: npm run build
 
+      # Fail instead of letting npm silently rewrite package.json fields
+      # (e.g. dropping "bin" entries it considers invalid).
+      - name: Check package.json needs no auto-corrections
+        run: |
+          npm publish --dry-run 2>&1 | tee dry-run.log
+          if grep -q "auto-corrected" dry-run.log; then
+            echo "::error::npm would auto-correct package.json; run 'npm pkg fix' and commit"
+            exit 1
+          fi
+
       # Provenance is generated automatically when publishing via OIDC.
       - run: npm publish

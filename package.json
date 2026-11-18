@@ -7,8 +7,8 @@
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tollbooth": "./dist/cli.js",
-    "x402-tollbooth": "./dist/cli.js"
+    "tollbooth": "dist/cli.js",
+    "x402-tollbooth": "dist/cli.js"
   },
   "exports": {
     ".": {
