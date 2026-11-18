@@ -346,6 +346,18 @@ export interface VerificationCacheStore {
 	set(key: string, entry: VerificationCacheEntry, ttlMs: number): Promise<void>;
 }
 
+// ── Payment Claims (replay protection) ──────────────────────────────────────
+
+/**
+ * Atomic set-if-absent store used to mark a payment as spent.
+ *
+ * `claim()` must return `true` for exactly one caller per key within the
+ * TTL window, even under concurrency (e.g. Redis `SET NX`).
+ */
+export interface PaymentClaimStore {
+	claim(key: string, ttlMs: number): Promise<boolean>;
+}
+
 // ── Time-Based Pricing Sessions ─────────────────────────────────────────────
 
 export interface TimeSessionStore {

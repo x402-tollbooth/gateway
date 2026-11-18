@@ -9,7 +9,11 @@ export {
 	serializeChallenge,
 	serializeReceipt,
 } from "./headers.js";
-export { StripeMethod } from "./stripe.js";
+export {
+	StripeMethod,
+	type StripeMethodOptions,
+	type StripePaymentIntentsClient,
+} from "./stripe.js";
 export { TempoMethod } from "./tempo.js";
 export type {
 	MppChallenge,
@@ -19,4 +23,5 @@ export type {
 	MppMethodType,
 	MppReceipt,
 	MppVerification,
+	MppVerifyContext,
 } from "./types.js";

@@ -2,6 +2,7 @@ import { log } from "../logger.js";
 import { generateChallengeId } from "../mpp/challenge.js";
 import {
 	type MppChallenge,
+	type MppCredential,
 	type MppMethod,
 	type MppVerification,
 	serializeChallenge,
@@ -93,10 +94,17 @@ export class MppSettlement implements SettlementStrategy {
 
 	// ── SettlementStrategy interface ────────────────────────────────────────
 
+	/**
+	 * Verify a payment. `payment` is either a full `MppCredential` (from an
+	 * `Authorization: Payment` header — its `id` is bound as the challenge id)
+	 * or a bare payload (e.g. an x402 `payment-signature`).
+	 */
 	async verify(
 		payment: unknown,
 		requirements: PaymentRequirementsPayload[],
 	): Promise<SettlementVerification> {
+		const { payload, challengeId } = unwrapCredential(payment);
+
 		// Try each method in order — the payment format determines which succeeds.
 		// For x402-compatible clients sending stablecoin proofs, tempo will match.
 		// For Stripe SPT clients, stripe will match.
@@ -104,10 +112,13 @@ export class MppSettlement implements SettlementStrategy {
 
 		for (const method of this.methods) {
 			try {
-				const inner = await method.verify(payment, requirements);
+				const inner = await method.verify(payload, requirements, {
+					challengeId,
+				});
 				const verification: MppVerification = {
 					payer: inner.payer,
 					methodType: method.type,
+					challengeId,
 					requirementIndex: getInnerRequirementIndex(inner),
 					inner,
 				};
@@ -156,36 +167,6 @@ export class MppSettlement implements SettlementStrategy {
 		return settlement;
 	}
 
-	/**
-	 * Reconstruct a verification from cached data.
-	 */
-	rebuildVerification(
-		_payment: unknown,
-		payer: string | undefined,
-		requirementIndex: number,
-		_requirements: PaymentRequirementsPayload[],
-	): SettlementVerification {
-		// Use the first (default) method for cache rebuilds — this assumes
-		// tempo is the primary method. If the cached index points to a
-		// different method, the verify loop will handle it on next miss.
-		const method = this.methods[0];
-		const verification: MppVerification = {
-			payer,
-			methodType: method.type,
-			requirementIndex,
-			inner: { payer },
-		};
-		return verification;
-	}
-
-	static getRequirementIndex(
-		verification: SettlementVerification,
-	): number | undefined {
-		return isMppVerification(verification)
-			? verification.requirementIndex
-			: undefined;
-	}
-
 	// ── Internal ────────────────────────────────────────────────────────────
 
 	private sweepExpired(): void {
@@ -200,6 +181,26 @@ export class MppSettlement implements SettlementStrategy {
 
 function isMppVerification(v: SettlementVerification): v is MppVerification {
 	return "methodType" in v && "inner" in v;
+}
+
+function isMppCredential(v: unknown): v is MppCredential {
+	if (!v || typeof v !== "object") return false;
+	const c = v as Record<string, unknown>;
+	return (
+		typeof c.id === "string" &&
+		typeof c.rawHeader === "string" &&
+		"payload" in c
+	);
+}
+
+function unwrapCredential(payment: unknown): {
+	payload: unknown;
+	challengeId: string | undefined;
+} {
+	if (isMppCredential(payment)) {
+		return { payload: payment.payload, challengeId: payment.id };
+	}
+	return { payload: payment, challengeId: undefined };
 }
 
 function getInnerRequirementIndex(inner: SettlementVerification): number {
