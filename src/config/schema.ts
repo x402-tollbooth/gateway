@@ -1,6 +1,27 @@
 import { type ZodTypeDef, z } from "zod";
 import { isValidIpOrCidr } from "../network/client-ip.js";
+import { extractPricePeriod } from "../pricing/parser.js";
 import type { TollboothConfig } from "../types.js";
+
+/**
+ * A price string, optionally with a period suffix ("$10/month").
+ * Unknown suffixes are rejected here so they fail at config load rather
+ * than on every request.
+ */
+function checkPricePeriod(price: string, ctx: z.RefinementCtx): void {
+	try {
+		extractPricePeriod(price);
+	} catch (err) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: err instanceof Error ? err.message : "Invalid price",
+		});
+	}
+}
+
+const priceStringSchema = z.string().min(1).superRefine(checkPricePeriod);
+/** Same check, without the non-empty requirement (fields that never had it). */
+const optionalPriceStringSchema = z.string().superRefine(checkPricePeriod);
 
 const durationSchema = z
 	.string()
@@ -42,7 +63,7 @@ const pricingFnRefSchema = z.object({
 
 const matchRuleSchema = z.object({
 	where: z.record(z.union([z.string(), z.number(), z.boolean()])),
-	price: z.string().min(1),
+	price: priceStringSchema,
 	payTo: payToSchema.optional(),
 });
 
@@ -50,9 +71,9 @@ const routePricingSchema = z
 	.object({
 		model: z.enum(["request", "time"]).optional(),
 		duration: durationSchema.optional(),
-		price: z.union([z.string().min(1), pricingFnRefSchema]).optional(),
+		price: z.union([priceStringSchema, pricingFnRefSchema]).optional(),
 		match: z.array(matchRuleSchema).optional(),
-		fallback: z.string().optional(),
+		fallback: optionalPriceStringSchema.optional(),
 	})
 	.strict()
 	.superRefine((pricing, ctx) => {
@@ -98,13 +119,32 @@ const mppMethodSchema = z.discriminatedUnion("type", [
 		.strict(),
 ]);
 
+const tempoRecurringSchema = z
+	.object({
+		interval: z.enum(["daily", "weekly", "monthly", "yearly"]),
+		autoPay: z.boolean().optional(),
+	})
+	.strict();
+
+const tempoSettlementConfigSchema = z
+	.object({
+		network: z.enum(["testnet", "mainnet"]).optional(),
+		token: z.string().min(1).optional(),
+		recipient: z.string().min(1),
+		url: z.string().url().optional(),
+		recurring: tempoRecurringSchema.optional(),
+		memo: z.record(z.string()).optional(),
+	})
+	.strict();
+
 const settlementStrategySchema = z
 	.object({
-		strategy: z.enum(["facilitator", "custom", "nanopayments", "mpp"]),
+		strategy: z.enum(["facilitator", "custom", "nanopayments", "mpp", "tempo"]),
 		url: z.string().url().optional(),
 		module: z.string().min(1).optional(),
 		network: z.enum(["testnet", "mainnet"]).optional(),
 		methods: z.array(mppMethodSchema).min(1).optional(),
+		tempo: tempoSettlementConfigSchema.optional(),
 	})
 	.strict()
 	.refine(
@@ -115,6 +155,10 @@ const settlementStrategySchema = z
 		(data) =>
 			data.strategy !== "mpp" || (data.methods && data.methods.length > 0),
 		"MPP settlement strategy requires at least one method",
+	)
+	.refine(
+		(data) => data.strategy !== "tempo" || !!data.tempo?.recipient,
+		"Tempo settlement strategy requires 'tempo.recipient'",
 	);
 
 const redisUrlSchema = z
@@ -230,9 +274,9 @@ const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
 	path: z.string().optional(),
-	price: z.union([z.string().min(1), pricingFnRefSchema]).optional(),
+	price: z.union([priceStringSchema, pricingFnRefSchema]).optional(),
 	match: z.array(matchRuleSchema).optional(),
-	fallback: z.string().optional(),
+	fallback: optionalPriceStringSchema.optional(),
 	pricing: routePricingSchema.optional(),
 	accepts: z.array(acceptedPaymentSchema).optional(),
 	payTo: payToSchema.optional(),
@@ -313,7 +357,7 @@ export const tollboothConfigSchema: z.ZodType<
 
 		defaults: z
 			.object({
-				price: z.string().default("$0.001"),
+				price: optionalPriceStringSchema.default("$0.001"),
 				timeout: z.number().positive().default(60),
 				rateLimit: rateLimitSchema.optional(),
 				verificationCache: verificationCacheSchema.optional(),

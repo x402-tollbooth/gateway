@@ -896,6 +896,11 @@ export function createGateway(
 					amount: settlement.amount,
 					asset: price.asset,
 					network: price.network,
+					...(settlement.customerId && { customer_id: settlement.customerId }),
+					...(settlement.memo && { memo: settlement.memo }),
+					...(settlement.attribution && {
+						attribution: settlement.attribution,
+					}),
 				});
 
 				// ── Hook: onSettled ───────────────────────────────────────────────
@@ -1178,6 +1183,9 @@ export function createGateway(
 				amount: settlement.amount,
 				asset: price.asset,
 				network: price.network,
+				...(settlement.customerId && { customer_id: settlement.customerId }),
+				...(settlement.memo && { memo: settlement.memo }),
+				...(settlement.attribution && { attribution: settlement.attribution }),
 			});
 
 			// ── Hook: onSettled ──────────────────────────────────────────

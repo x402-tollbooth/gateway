@@ -260,6 +260,12 @@ export interface SettlementInfo {
 	amount: string;
 	transaction: string;
 	network: string;
+	/** Optional customer identifier (defaults to payer). */
+	customerId?: string;
+	/** Optional invoice/memo metadata produced by the strategy. */
+	memo?: Record<string, unknown>;
+	/** Optional per-customer deposit attribution metadata. */
+	attribution?: Record<string, unknown>;
 }
 
 export interface TollboothError {
@@ -311,11 +317,34 @@ export interface SettlementStrategy {
 }
 
 export interface SettlementStrategyConfig {
-	strategy: "facilitator" | "custom" | "nanopayments" | "mpp";
+	strategy: "facilitator" | "custom" | "nanopayments" | "mpp" | "tempo";
 	url?: string;
 	module?: string;
 	network?: "testnet" | "mainnet";
 	methods?: Array<{ type: "tempo" } | { type: "stripe"; secretKey: string }>;
+	tempo?: TempoSettlementConfig;
+}
+
+export type TempoRecurringInterval = "daily" | "weekly" | "monthly" | "yearly";
+
+export interface TempoRecurringConfig {
+	interval: TempoRecurringInterval;
+	autoPay?: boolean;
+}
+
+export interface TempoSettlementConfig {
+	/** Tempo network. Defaults to "mainnet". */
+	network?: "testnet" | "mainnet";
+	/** Fee token (e.g. "pathUSD"). Defaults to "pathUSD". */
+	token?: string;
+	/** Merchant address that receives funds. */
+	recipient: string;
+	/** Optional facilitator URL for verify/settle. */
+	url?: string;
+	/** Recurring/auto-pay metadata for subscription routes. */
+	recurring?: TempoRecurringConfig;
+	/** Memo template — values may contain `{customerId}` or `{period}` tokens. */
+	memo?: Record<string, string>;
 }
 
 // ── Rate Limiting ────────────────────────────────────────────────────────────
