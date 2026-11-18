@@ -1,6 +1,27 @@
 import { type ZodTypeDef, z } from "zod";
 import { isValidIpOrCidr } from "../network/client-ip.js";
+import { extractPricePeriod } from "../pricing/parser.js";
 import type { TollboothConfig } from "../types.js";
+
+/**
+ * A price string, optionally with a period suffix ("$10/month").
+ * Unknown suffixes are rejected here so they fail at config load rather
+ * than on every request.
+ */
+function checkPricePeriod(price: string, ctx: z.RefinementCtx): void {
+	try {
+		extractPricePeriod(price);
+	} catch (err) {
+		ctx.addIssue({
+			code: z.ZodIssueCode.custom,
+			message: err instanceof Error ? err.message : "Invalid price",
+		});
+	}
+}
+
+const priceStringSchema = z.string().min(1).superRefine(checkPricePeriod);
+/** Same check, without the non-empty requirement (fields that never had it). */
+const optionalPriceStringSchema = z.string().superRefine(checkPricePeriod);
 
 const durationSchema = z
 	.string()
@@ -42,7 +63,7 @@ const pricingFnRefSchema = z.object({
 
 const matchRuleSchema = z.object({
 	where: z.record(z.union([z.string(), z.number(), z.boolean()])),
-	price: z.string().min(1),
+	price: priceStringSchema,
 	payTo: payToSchema.optional(),
 });
 
@@ -50,9 +71,9 @@ const routePricingSchema = z
 	.object({
 		model: z.enum(["request", "time"]).optional(),
 		duration: durationSchema.optional(),
-		price: z.union([z.string().min(1), pricingFnRefSchema]).optional(),
+		price: z.union([priceStringSchema, pricingFnRefSchema]).optional(),
 		match: z.array(matchRuleSchema).optional(),
-		fallback: z.string().optional(),
+		fallback: optionalPriceStringSchema.optional(),
 	})
 	.strict()
 	.superRefine((pricing, ctx) => {
@@ -253,9 +274,9 @@ const routeConfigSchema = z.object({
 	upstream: z.string().min(1),
 	type: z.enum(["token-based", "openai-compatible"]).optional(),
 	path: z.string().optional(),
-	price: z.union([z.string().min(1), pricingFnRefSchema]).optional(),
+	price: z.union([priceStringSchema, pricingFnRefSchema]).optional(),
 	match: z.array(matchRuleSchema).optional(),
-	fallback: z.string().optional(),
+	fallback: optionalPriceStringSchema.optional(),
 	pricing: routePricingSchema.optional(),
 	accepts: z.array(acceptedPaymentSchema).optional(),
 	payTo: payToSchema.optional(),
@@ -336,7 +357,7 @@ export const tollboothConfigSchema: z.ZodType<
 
 		defaults: z
 			.object({
-				price: z.string().default("$0.001"),
+				price: optionalPriceStringSchema.default("$0.001"),
 				timeout: z.number().positive().default(60),
 				rateLimit: rateLimitSchema.optional(),
 				verificationCache: verificationCacheSchema.optional(),
