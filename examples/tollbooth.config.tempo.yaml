@@ -1,0 +1,58 @@
+# tollbooth.config.tempo.yaml — Tempo settlement with a monthly plan
+#
+# Requires an x402 facilitator that supports Tempo (set TEMPO_FACILITATOR_URL).
+# tollbooth does not ship a default Tempo facilitator.
+
+gateway:
+  port: 3000
+  discovery: true
+
+# Payments are sent to this address.
+wallets:
+  tempo-mainnet: "${TEMPO_MERCHANT_ADDRESS}"
+
+accepts:
+  # pathUSD on Tempo mainnet. Use whatever asset identifier your facilitator
+  # expects; the pathUSD token address is shown here.
+  - asset: "0x20c0000000000000000000000000000000000000"
+    network: tempo-mainnet
+
+defaults:
+  price: "$0.001"
+  timeout: 60
+
+upstreams:
+  api:
+    url: "https://api.example.com"
+
+routes:
+  # Pay once, then access for 30 days ("$10/month" = time-based pricing).
+  "GET /premium/*":
+    upstream: api
+    price: "$10/month"
+
+  # Regular per-request route.
+  "GET /search":
+    upstream: api
+    price: "$0.01"
+
+settlement:
+  strategy: tempo
+  tempo:
+    url: "${TEMPO_FACILITATOR_URL}"
+    network: mainnet
+    token: pathUSD
+    # Should be the same address as in `wallets` (used for attribution/memos).
+    recipient: "${TEMPO_MERCHANT_ADDRESS}"
+    recurring:
+      interval: monthly
+    memo:
+      invoice_id: "{customer_id}-{period}"
+
+# Time-based access is tracked in the time-session store. Use Redis when
+# running more than one instance.
+# stores:
+#   redis:
+#     url: "redis://localhost:6379"
+#   timeSession:
+#     backend: redis

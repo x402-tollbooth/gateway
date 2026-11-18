@@ -8,12 +8,6 @@ import type {
 	TempoRecurringInterval,
 	TempoSettlementConfig,
 } from "../types.js";
-import { DEFAULT_FACILITATOR } from "../x402/facilitator.js";
-
-const DEFAULT_TEMPO_FACILITATORS: Record<"testnet" | "mainnet", string> = {
-	mainnet: "https://facilitator.tempo.xyz",
-	testnet: "https://facilitator.testnet.tempo.xyz",
-};
 
 const INTERVAL_PRETTY: Record<TempoRecurringInterval, string> = {
 	daily: "day",
@@ -36,8 +30,9 @@ interface TempoSettlementVerification extends SettlementVerification {
  *
  * Recurring routes piggyback on tollbooth's existing time-based pricing
  * substrate — the route's `price: "$10/month"` triggers a `TimeSessionStore`
- * entry, and Tempo's on-chain auto-pay primitive handles the actual recurring
- * transfer when `recurring.autoPay` is true.
+ * entry, so the payer is charged once per period. tollbooth does not create
+ * an on-chain subscription: `recurring` (including `autoPay`) and `memo` are
+ * metadata attached to the SettlementInfo (logs, onSettled hook, receipt).
  */
 export class TempoSettlement implements SettlementStrategy {
 	private readonly inner: TempoMethod;
@@ -46,11 +41,17 @@ export class TempoSettlement implements SettlementStrategy {
 	private readonly network: "testnet" | "mainnet";
 	private readonly recurring?: TempoSettlementConfig["recurring"];
 	private readonly memoTemplate: Record<string, string>;
-	private warnedFirstDeploy = false;
 
 	constructor(config: TempoSettlementConfig) {
 		if (!config.recipient) {
 			throw new Error("TempoSettlement requires a recipient address");
+		}
+		// There is no canonical Tempo x402 facilitator, so we don't guess one:
+		// the operator must point at a facilitator that supports Tempo.
+		if (!config.url) {
+			throw new Error(
+				"TempoSettlement requires a facilitator URL (settlement.tempo.url or settlement.url)",
+			);
 		}
 
 		this.recipient = config.recipient;
@@ -59,11 +60,7 @@ export class TempoSettlement implements SettlementStrategy {
 		this.recurring = config.recurring;
 		this.memoTemplate = config.memo ?? {};
 
-		const facilitatorUrl =
-			config.url ??
-			DEFAULT_TEMPO_FACILITATORS[this.network] ??
-			DEFAULT_FACILITATOR;
-		this.inner = new TempoMethod([{ url: facilitatorUrl }]);
+		this.inner = new TempoMethod([{ url: config.url }]);
 
 		log.info("tempo_settlement_init", {
 			network: this.network,
@@ -125,10 +122,6 @@ export class TempoSettlement implements SettlementStrategy {
 				interval: this.recurring.interval,
 				autoPay: this.recurring.autoPay ?? false,
 			};
-		}
-
-		if (!this.warnedFirstDeploy) {
-			this.warnedFirstDeploy = true;
 		}
 
 		return {

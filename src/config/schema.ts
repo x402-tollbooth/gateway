@@ -159,6 +159,10 @@ const settlementStrategySchema = z
 	.refine(
 		(data) => data.strategy !== "tempo" || !!data.tempo?.recipient,
 		"Tempo settlement strategy requires 'tempo.recipient'",
+	)
+	.refine(
+		(data) => data.strategy !== "tempo" || !!(data.tempo?.url ?? data.url),
+		"Tempo settlement strategy requires a facilitator URL that supports Tempo: set 'settlement.tempo.url' (or 'settlement.url')",
 	);
 
 const redisUrlSchema = z
