@@ -5,6 +5,14 @@ on:
     tags:
       - 'v*'
 
+# npm Trusted Publishing: npm authenticates this workflow via GitHub OIDC,
+# so no NPM_TOKEN secret is needed. The trusted publisher is configured on
+# npmjs.com (package settings → Trusted publishing → GitHub Actions) with
+# repository x402-tollbooth/gateway and workflow filename publish.yml.
+permissions:
+  contents: read
+  id-token: write # required for OIDC
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -13,8 +21,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Trusted publishing requires Node >= 22.14 and npm >= 11.5.1
+          node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      - run: npm install -g npm@^11.5.1
 
       - run: npm ci
 
@@ -22,6 +33,15 @@ jobs:
 
       - run: npm run build
 
+      # Fail instead of letting npm silently rewrite package.json fields
+      # (e.g. dropping "bin" entries it considers invalid).
+      - name: Check package.json needs no auto-corrections
+        run: |
+          npm publish --dry-run 2>&1 | tee dry-run.log
+          if grep -q "auto-corrected" dry-run.log; then
+            echo "::error::npm would auto-correct package.json; run 'npm pkg fix' and commit"
+            exit 1
+          fi
+
+      # Provenance is generated automatically when publishing via OIDC.
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

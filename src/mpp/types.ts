@@ -48,6 +48,11 @@ export interface MppReceipt {
 
 // ── Method interface ────────────────────────────────────────────────────────
 
+export interface MppVerifyContext {
+	/** Challenge id the client claims to be answering. */
+	challengeId?: string;
+}
+
 export interface MppMethod {
 	type: MppMethodType;
 
@@ -63,10 +68,15 @@ export interface MppMethod {
 
 	/**
 	 * Verify a credential payload submitted by the client.
+	 *
+	 * `context.challengeId` is the `id` from the client's
+	 * `Authorization: Payment id="..."` header, when the payment arrived as
+	 * an MPP credential.
 	 */
 	verify(
 		payload: unknown,
 		requirements: PaymentRequirementsPayload[],
+		context?: MppVerifyContext,
 	): Promise<SettlementVerification>;
 
 	/**

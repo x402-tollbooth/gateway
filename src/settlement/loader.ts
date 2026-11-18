@@ -5,6 +5,7 @@ import { TempoMethod } from "../mpp/tempo.js";
 import type {
 	AcceptedPayment,
 	FacilitatorMapping,
+	PaymentClaimStore,
 	RouteConfig,
 	SettlementStrategy,
 	SettlementStrategyConfig,
@@ -16,6 +17,7 @@ import {
 import { FacilitatorSettlement } from "./facilitator.js";
 import { MppSettlement } from "./mpp.js";
 import { NanopaymentSettlement } from "./nanopayments.js";
+import { TempoSettlement } from "./tempo.js";
 
 const strategyCache = new Map<string, SettlementStrategy>();
 
@@ -83,11 +85,18 @@ export function createFacilitatorStrategy(
  * Returns `null` for the default facilitator strategy (which is created
  * per-request because facilitator URLs depend on the matched route).
  */
-export async function initSettlementStrategy(config: {
-	settlement?: SettlementStrategyConfig;
-	facilitator?: string | FacilitatorMapping;
-	routes?: Record<string, RouteConfig>;
-}): Promise<SettlementStrategy | null> {
+export async function initSettlementStrategy(
+	config: {
+		settlement?: SettlementStrategyConfig;
+		facilitator?: string | FacilitatorMapping;
+		routes?: Record<string, RouteConfig>;
+		wallets?: Record<string, string>;
+	},
+	deps?: {
+		/** Marks MPP Stripe PaymentIntents as spent (replay protection). */
+		paymentClaimStore?: PaymentClaimStore;
+	},
+): Promise<SettlementStrategy | null> {
 	if (config.settlement?.strategy === "nanopayments") {
 		// Warn about ignored facilitator overrides
 		if (config.facilitator) {
@@ -114,6 +123,51 @@ export async function initSettlementStrategy(config: {
 		return strategy;
 	}
 
+	if (config.settlement?.strategy === "tempo") {
+		if (!config.settlement.tempo) {
+			throw new Error(
+				"Tempo settlement strategy requires a 'tempo' config block",
+			);
+		}
+
+		// Warn about ignored facilitator overrides
+		if (config.facilitator) {
+			log.warn("tempo_strategy_ignores_facilitator", {
+				msg: "Top-level 'facilitator' is ignored when settlement.strategy is 'tempo'",
+			});
+		}
+		if (config.routes) {
+			for (const [key, route] of Object.entries(config.routes)) {
+				if (route.facilitator) {
+					log.warn("tempo_strategy_ignores_facilitator", {
+						route: key,
+						msg: "Route-level 'facilitator' is ignored when settlement.strategy is 'tempo'",
+					});
+				}
+			}
+		}
+
+		// Funds go to the route's payTo (from `wallets`); `tempo.recipient` is
+		// only used for attribution and memos. Flag a mismatch so receipts
+		// don't name an address that isn't actually being paid.
+		const recipient = config.settlement.tempo.recipient.toLowerCase();
+		const walletAddresses = Object.values(config.wallets ?? {}).map((w) =>
+			w.toLowerCase(),
+		);
+		if (!walletAddresses.includes(recipient)) {
+			log.warn("tempo_recipient_not_in_wallets", {
+				recipient: config.settlement.tempo.recipient,
+				hint: "settlement.tempo.recipient does not match any address in 'wallets'. Payments go to the wallet address; recipient is only used in attribution and memos.",
+			});
+		}
+
+		const tempoConfig = {
+			...config.settlement.tempo,
+			url: config.settlement.tempo.url ?? config.settlement.url,
+		};
+		return new TempoSettlement(tempoConfig);
+	}
+
 	if (config.settlement?.strategy === "mpp") {
 		if (!config.settlement.methods?.length) {
 			throw new Error("MPP settlement strategy requires at least one method");
@@ -132,7 +186,10 @@ export async function initSettlementStrategy(config: {
 				return new TempoMethod([{ url: facilitatorUrl }]);
 			}
 			if (m.type === "stripe") {
-				return new StripeMethod({ secretKey: m.secretKey });
+				return new StripeMethod({
+					secretKey: m.secretKey,
+					claimStore: deps?.paymentClaimStore,
+				});
 			}
 			throw new Error(
 				`Unknown MPP method type: ${(m as { type: string }).type}`,

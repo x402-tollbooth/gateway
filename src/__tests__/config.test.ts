@@ -412,3 +412,45 @@ describe("loadConfig error formatting", () => {
 		}
 	});
 });
+
+describe("price period validation", () => {
+	function configWith(route: Record<string, unknown>, defaults = {}) {
+		return {
+			gateway: { port: 3000 },
+			wallets: { "base-sepolia": "0xtest" },
+			accepts: [{ asset: "USDC", network: "base-sepolia" }],
+			defaults: { price: "$0.001", timeout: 60, ...defaults },
+			upstreams: { api: { url: "http://localhost:8080" } },
+			routes: { "GET /test": { upstream: "api", ...route } },
+		};
+	}
+
+	test("accepts known period suffixes", () => {
+		for (const price of ["$10/month", "$0.001/req", "$5/week", "$0.01"]) {
+			const result = tollboothConfigSchema.safeParse(configWith({ price }));
+			expect(result.success, price).toBe(true);
+		}
+	});
+
+	test("rejects an unknown period suffix at load time", () => {
+		const result = tollboothConfigSchema.safeParse(
+			configWith({ price: "$10/fortnight" }),
+		);
+		expect(result.success).toBe(false);
+		expect(JSON.stringify(result.error?.issues)).toContain("fortnight");
+	});
+
+	test("rejects unknown suffixes in match, fallback, pricing.price and defaults", () => {
+		const bad = [
+			configWith({
+				match: [{ where: { "query.x": "1" }, price: "$1/fortnight" }],
+			}),
+			configWith({ price: "$1", fallback: "$1/fortnight" }),
+			configWith({ pricing: { price: "$1/fortnight" } }),
+			configWith({}, { price: "$1/fortnight" }),
+		];
+		for (const cfg of bad) {
+			expect(tollboothConfigSchema.safeParse(cfg).success).toBe(false);
+		}
+	});
+});

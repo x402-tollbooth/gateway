@@ -91,7 +91,7 @@ Available tags: `latest`, `0.5.0` / `0.5`, or a specific commit SHA.
 - **Lifecycle hooks** — `onRequest`, `onPriceResolved`, `onSettled`, `onResponse`, `onError`
 - **x402 V2** — modern headers, auto-discovery at `/.well-known/x402`
 - **Multi-chain** — Base, Solana, or any supported network
-- **Pluggable settlement** — default facilitator, self-hosted, or fully custom
+- **Pluggable settlement** — default facilitator, self-hosted, Circle Nanopayments, MPP, Tempo (recurring + invoice memos), or fully custom
 - **Streaming/SSE** — pass-through without buffering
 - **OpenAPI import/export** — auto-generate routes from a spec
 - **Prometheus metrics** — request, payment, and upstream counters/histograms

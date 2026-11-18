@@ -1,4 +1,5 @@
 import type {
+	PaymentClaimStore,
 	VerificationCacheEntry,
 	VerificationCacheStore,
 } from "../types.js";
@@ -10,7 +11,14 @@ export interface RedisVerificationCacheClient {
 		value: string,
 		px: "PX",
 		milliseconds: number,
-	): Promise<"OK">;
+	): Promise<"OK" | null>;
+	set(
+		key: string,
+		value: string,
+		px: "PX",
+		milliseconds: number,
+		nx: "NX",
+	): Promise<"OK" | null>;
 	del(...keys: string[]): Promise<number>;
 	close?(): void;
 }
@@ -23,7 +31,9 @@ interface RedisVerificationCacheStoreOptions {
 /**
  * Redis-backed verification cache with TTL-based expiry.
  */
-export class RedisVerificationCacheStore implements VerificationCacheStore {
+export class RedisVerificationCacheStore
+	implements VerificationCacheStore, PaymentClaimStore
+{
 	private readonly prefix: string;
 	private readonly closeClient: boolean;
 
@@ -73,6 +83,22 @@ export class RedisVerificationCacheStore implements VerificationCacheStore {
 			"PX",
 			Math.max(1, Math.floor(ttlMs)),
 		);
+	}
+
+	/**
+	 * Atomically mark `key` as claimed via `SET key 1 PX ttl NX`.
+	 * Returns `false` if another caller (on any instance) already claimed it.
+	 */
+	async claim(key: string, ttlMs: number): Promise<boolean> {
+		const redisKey = `${this.prefix}:claim:${key}`;
+		const result = await this.client.set(
+			redisKey,
+			"1",
+			"PX",
+			Math.max(1, Math.floor(ttlMs)),
+			"NX",
+		);
+		return result === "OK";
 	}
 
 	close(): void {

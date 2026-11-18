@@ -56,6 +56,7 @@ import {
 } from "./store/resolve.js";
 import type {
 	CorsConfig,
+	PaymentClaimStore,
 	PaymentRequirementsPayload,
 	PayToSplit,
 	RateLimitStore,
@@ -169,6 +170,7 @@ export function createGateway(
 		rateLimitStore?: RateLimitStore;
 		verificationCacheStore?: VerificationCacheStore;
 		timeSessionStore?: TimeSessionStore;
+		paymentClaimStore?: PaymentClaimStore;
 	},
 ): TollboothGateway {
 	let server: PortableServer | null = null;
@@ -177,6 +179,13 @@ export function createGateway(
 	const verificationCacheStore =
 		options?.verificationCacheStore ??
 		createVerificationCacheStoreFromConfig(config);
+	// Spent-payment claims share the verification cache backend (Redis when
+	// stores.verificationCache.backend is "redis"), unless overridden.
+	const paymentClaimStore: PaymentClaimStore =
+		options?.paymentClaimStore ??
+		(isPaymentClaimStore(verificationCacheStore)
+			? verificationCacheStore
+			: new MemoryVerificationCacheStore());
 	const timeSessionStore =
 		options?.timeSessionStore ?? createTimeSessionStoreFromConfig(config);
 	const trustProxy = config.gateway.trustProxy ?? false;
@@ -726,9 +735,15 @@ export function createGateway(
 						createPaymentRequiredResponse(requirements, mppChallenges),
 					);
 				}
-				const payment =
-					mppCredential?.payload ??
-					(paymentHeader ? decodePaymentSignature(paymentHeader) : null);
+				// MppSettlement gets the whole credential so it can bind the
+				// challenge id; other strategies only see the payload.
+				const payment = mppCredential
+					? customStrategy instanceof MppSettlement
+						? mppCredential
+						: mppCredential.payload
+					: paymentHeader
+						? decodePaymentSignature(paymentHeader)
+						: null;
 
 				// ── Resolve settlement strategy ─────────────────────────────────
 				const strategy =
@@ -881,6 +896,11 @@ export function createGateway(
 					amount: settlement.amount,
 					asset: price.asset,
 					network: price.network,
+					...(settlement.customerId && { customer_id: settlement.customerId }),
+					...(settlement.memo && { memo: settlement.memo }),
+					...(settlement.attribution && {
+						attribution: settlement.attribution,
+					}),
 				});
 
 				// ── Hook: onSettled ───────────────────────────────────────────────
@@ -1163,6 +1183,9 @@ export function createGateway(
 				amount: settlement.amount,
 				asset: price.asset,
 				network: price.network,
+				...(settlement.customerId && { customer_id: settlement.customerId }),
+				...(settlement.memo && { memo: settlement.memo }),
+				...(settlement.attribution && { attribution: settlement.attribution }),
 			});
 
 			// ── Hook: onSettled ──────────────────────────────────────────
@@ -1411,7 +1434,9 @@ export function createGateway(
 		},
 		async start(options?: { silent?: boolean }) {
 			// Load custom settlement strategy if configured
-			customStrategy = await initSettlementStrategy(config);
+			customStrategy = await initSettlementStrategy(config, {
+				paymentClaimStore,
+			});
 
 			// Import routes from upstream OpenAPI specs
 			await importOpenAPIRoutes(config);
@@ -1470,6 +1495,9 @@ export function createGateway(
 			server = null;
 			destroyOrCloseStore(rateLimitStore);
 			destroyOrCloseStore(verificationCacheStore);
+			if ((paymentClaimStore as unknown) !== verificationCacheStore) {
+				destroyOrCloseStore(paymentClaimStore);
+			}
 			destroyOrCloseStore(timeSessionStore);
 		},
 	};
@@ -1477,7 +1505,8 @@ export function createGateway(
 	/**
 	 * Verify a payment via the settlement strategy with optional caching.
 	 *
-	 * Caching only applies to FacilitatorSettlement (not custom strategies).
+	 * Caching only applies to FacilitatorSettlement. MPP is never cached: a
+	 * cache hit would skip the Stripe challenge binding and spent-intent claim.
 	 * On cache hit, rebuilds a verification from the cached requirement index
 	 * without calling the facilitator /verify endpoint. On cache miss, verifies
 	 * normally and caches the result.
@@ -1495,11 +1524,9 @@ export function createGateway(
 		cacheConfig: VerificationCacheConfig | undefined,
 	): Promise<SettlementVerification> {
 		const isFacilitator = strategy instanceof FacilitatorSettlement;
-		const isMpp = strategy instanceof MppSettlement;
-		const isCacheable = isFacilitator || isMpp;
 
-		// Try cache (facilitator and MPP strategies)
-		if (isCacheable && cacheKey && cacheConfig) {
+		// Try cache (facilitator strategy only)
+		if (isFacilitator && cacheKey && cacheConfig) {
 			const cached = await verificationCacheStore.get(cacheKey);
 			if (cached) {
 				metrics?.incCacheHit(routeLabel);
@@ -1524,11 +1551,9 @@ export function createGateway(
 		}
 		const verification = await strategy.verify(payment, requirements);
 
-		// Cache successful verification (facilitator and MPP)
-		if (isCacheable && cacheKey && cacheConfig) {
-			const idx = isFacilitator
-				? FacilitatorSettlement.getRequirementIndex(verification)
-				: MppSettlement.getRequirementIndex(verification);
+		// Cache successful verification (facilitator only)
+		if (isFacilitator && cacheKey && cacheConfig) {
+			const idx = FacilitatorSettlement.getRequirementIndex(verification);
 			if (idx !== undefined) {
 				const ttlMs = parseWindow(cacheConfig.ttl);
 				await verificationCacheStore.set(
@@ -1583,6 +1608,14 @@ function createTimeSessionStoreFromConfig(
 			prefix: buildRedisStorePrefix(redis.prefix, "timeSession"),
 			closeClient: true,
 		},
+	);
+}
+
+function isPaymentClaimStore(store: unknown): store is PaymentClaimStore {
+	return (
+		!!store &&
+		typeof store === "object" &&
+		typeof (store as { claim?: unknown }).claim === "function"
 	);
 }
 

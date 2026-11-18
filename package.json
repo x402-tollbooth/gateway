@@ -1,14 +1,14 @@
 {
   "name": "x402-tollbooth",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "description": "Turn any API into a paid x402 API gateway. YAML config, dynamic pricing, multi-upstream proxy.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "tollbooth": "./dist/cli.js",
-    "x402-tollbooth": "./dist/cli.js"
+    "tollbooth": "dist/cli.js",
+    "x402-tollbooth": "dist/cli.js"
   },
   "exports": {
     ".": {
