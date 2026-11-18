@@ -2,13 +2,19 @@
 set -euo pipefail
 
 # ── E2E runtime smoke test ──────────────────────────────────────────────────
-# Usage: bash scripts/e2e-runtime.sh <node|bun>
+# Usage: bash scripts/e2e-runtime.sh <node|bun> [cli-command]
 #
-# Boots the built gateway CLI under the given runtime, starts a mock upstream,
-# and verifies basic HTTP behaviour (health, free proxy, 404).
+# Boots the gateway CLI, starts a mock upstream, verifies basic HTTP behaviour
+# (health, free proxy, 404).
+#
+# With one arg, runs the local build: "<runtime> dist/cli.js start ...".
+# With a second arg, runs that command directly (e.g. an installed bin like
+# /tmp/preview/node_modules/.bin/tollbooth). The runtime arg is kept for
+# labelling in that case.
 # ────────────────────────────────────────────────────────────────────────────
 
-RUNTIME="${1:?Usage: $0 <node|bun>}"
+RUNTIME="${1:?Usage: $0 <node|bun> [cli-command]}"
+CLI_CMD="${2:-}"
 PASS=0
 FAIL=0
 PIDS=()
@@ -74,7 +80,12 @@ EOF
 
 # ── 3. Start gateway ───────────────────────────────────────────────────────
 
-"$RUNTIME" dist/cli.js start --config=/tmp/tollbooth-e2e.yml > /tmp/e2e-gw.log 2>&1 &
+if [ -n "$CLI_CMD" ]; then
+  # shellcheck disable=SC2086
+  $CLI_CMD start --config=/tmp/tollbooth-e2e.yml > /tmp/e2e-gw.log 2>&1 &
+else
+  "$RUNTIME" dist/cli.js start --config=/tmp/tollbooth-e2e.yml > /tmp/e2e-gw.log 2>&1 &
+fi
 PIDS+=($!)
 
 # Wait for gateway to be ready (up to 10s)
