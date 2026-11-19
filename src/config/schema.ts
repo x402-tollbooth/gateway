@@ -1,4 +1,4 @@
-import { type ZodTypeDef, z } from "zod";
+import { z } from "zod";
 import { isValidIpOrCidr } from "../network/client-ip.js";
 import { extractPricePeriod } from "../pricing/parser.js";
 import type { TollboothConfig } from "../types.js";
@@ -13,7 +13,7 @@ function checkPricePeriod(price: string, ctx: z.RefinementCtx): void {
 		extractPricePeriod(price);
 	} catch (err) {
 		ctx.addIssue({
-			code: z.ZodIssueCode.custom,
+			code: "custom",
 			message: err instanceof Error ? err.message : "Invalid price",
 		});
 	}
@@ -62,7 +62,7 @@ const pricingFnRefSchema = z.object({
 });
 
 const matchRuleSchema = z.object({
-	where: z.record(z.union([z.string(), z.number(), z.boolean()])),
+	where: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
 	price: priceStringSchema,
 	payTo: payToSchema.optional(),
 });
@@ -79,7 +79,7 @@ const routePricingSchema = z
 	.superRefine((pricing, ctx) => {
 		if (pricing.model === "time" && !pricing.duration) {
 			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
+				code: "custom",
 				path: ["duration"],
 				message: 'Required when pricing.model is "time"',
 			});
@@ -87,7 +87,7 @@ const routePricingSchema = z
 
 		if (pricing.model !== "time" && pricing.duration) {
 			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
+				code: "custom",
 				path: ["duration"],
 				message: 'Only allowed when pricing.model is "time"',
 			});
@@ -107,7 +107,7 @@ const routeHooksSchema = z
 
 const facilitatorMappingSchema = z.object({
 	default: z.string().url().optional(),
-	chains: z.record(z.string().url()).optional(),
+	chains: z.record(z.string(), z.string().url()).optional(),
 });
 
 const facilitatorSchema = z.union([z.string().url(), facilitatorMappingSchema]);
@@ -133,7 +133,7 @@ const tempoSettlementConfigSchema = z
 		recipient: z.string().min(1),
 		url: z.string().url().optional(),
 		recurring: tempoRecurringSchema.optional(),
-		memo: z.record(z.string()).optional(),
+		memo: z.record(z.string(), z.string()).optional(),
 	})
 	.strict();
 
@@ -267,7 +267,7 @@ const corsSchema = z
 	.superRefine((cors, ctx) => {
 		if (cors.credentials && cors.allowedOrigins.includes("*")) {
 			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
+				code: "custom",
 				path: ["allowedOrigins"],
 				message: 'Wildcard "*" origin is not allowed when credentials=true',
 			});
@@ -285,17 +285,17 @@ const routeConfigSchema = z.object({
 	accepts: z.array(acceptedPaymentSchema).optional(),
 	payTo: payToSchema.optional(),
 	hooks: routeHooksSchema,
-	metadata: z.record(z.unknown()).optional(),
+	metadata: z.record(z.string(), z.unknown()).optional(),
 	facilitator: facilitatorSchema.optional(),
 	rateLimit: rateLimitSchema.optional(),
 	verificationCache: verificationCacheSchema.optional(),
-	models: z.record(z.string().min(1)).optional(),
+	models: z.record(z.string(), z.string().min(1)).optional(),
 	settlement: z.enum(["before-response", "after-response"]).optional(),
 });
 
 const upstreamConfigSchema = z.object({
 	url: z.string().url(),
-	headers: z.record(z.string()).optional(),
+	headers: z.record(z.string(), z.string()).optional(),
 	timeout: z.number().positive().optional(),
 	openapi: z
 		.string()
@@ -331,31 +331,27 @@ const metricsConfigSchema = z
 	.superRefine((metrics, ctx) => {
 		if (!metrics.path.startsWith("/")) {
 			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
+				code: "custom",
 				path: ["path"],
 				message: 'Must start with "/"',
 			});
 		}
 	});
 
-export const tollboothConfigSchema: z.ZodType<
-	TollboothConfig,
-	ZodTypeDef,
-	unknown
-> = z
+export const tollboothConfigSchema: z.ZodType<TollboothConfig, unknown> = z
 	.object({
 		gateway: z
 			.object({
 				port: z.number().int().positive().default(3000),
 				discovery: z.boolean().default(true),
 				hostname: z.string().optional(),
-				metrics: metricsConfigSchema.default({}),
+				metrics: metricsConfigSchema.prefault({}),
 				trustProxy: trustProxySchema.default(false),
 				cors: corsSchema.optional(),
 			})
-			.default({}),
+			.prefault({}),
 
-		wallets: z.record(z.string().min(1)),
+		wallets: z.record(z.string(), z.string().min(1)),
 
 		accepts: z.array(acceptedPaymentSchema).min(1),
 
@@ -366,13 +362,13 @@ export const tollboothConfigSchema: z.ZodType<
 				rateLimit: rateLimitSchema.optional(),
 				verificationCache: verificationCacheSchema.optional(),
 			})
-			.default({}),
+			.prefault({}),
 
 		stores: storesSchema.optional(),
 
-		upstreams: z.record(upstreamConfigSchema),
+		upstreams: z.record(z.string(), upstreamConfigSchema),
 
-		routes: z.record(routeConfigSchema),
+		routes: z.record(z.string(), routeConfigSchema),
 
 		hooks: routeHooksSchema,
 
@@ -393,7 +389,7 @@ export const tollboothConfigSchema: z.ZodType<
 			const storeUrl = storeConfig.redis?.url ?? globalRedis;
 			if (storeUrl) continue;
 			ctx.addIssue({
-				code: z.ZodIssueCode.custom,
+				code: "custom",
 				path: ["stores", storeName, "redis", "url"],
 				message: `Required when stores.${storeName}.backend is "redis"`,
 			});
