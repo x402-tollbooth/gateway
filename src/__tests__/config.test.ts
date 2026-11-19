@@ -1,3 +1,6 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { interpolateEnv } from "../config/env.js";
 import { loadConfig } from "../config/loader.js";
@@ -360,56 +363,93 @@ describe("tollboothConfigSchema", () => {
 });
 
 describe("loadConfig error formatting", () => {
+	const validConfig = {
+		wallets: { base: "0xtest" },
+		accepts: [{ asset: "USDC", network: "base" }],
+		upstreams: { api: { url: "https://api.example.com" } },
+		routes: { "GET /test": { upstream: "api" } },
+	};
+
+	/** Write `config` to a temp file and return the loadConfig error message. */
+	function loadError(config: unknown): string {
+		const dir = mkdtempSync(join(tmpdir(), "tb-"));
+		const file = join(dir, "tollbooth.config.json");
+		writeFileSync(file, JSON.stringify(config));
+		try {
+			loadConfig(file);
+		} catch (e: unknown) {
+			return (e as Error).message;
+		}
+		throw new Error("expected loadConfig to throw");
+	}
+
 	test("formats missing required field with suggestion", () => {
 		expect(() => loadConfig("/dev/null")).toThrow(/Invalid tollbooth config/);
+
+		const { wallets: _, ...noWallets } = validConfig;
+		const msg = loadError(noWallets);
+		expect(msg).toContain("wallets — Required");
+		expect(msg).toContain('→ Add the "wallets" field to your config');
+	});
+
+	test("formats wrong types in config terms", () => {
+		const msg = loadError({ ...validConfig, wallets: "0xtest" });
+		expect(msg).toContain("wallets — Expected object, received string");
+		expect(msg).toContain("→ Expected object, got string");
+
+		const port = loadError({ ...validConfig, gateway: { port: 3.5 } });
+		expect(port).toContain("gateway.port — Expected integer, received float");
 	});
 
 	test("formats invalid URL with suggestion", () => {
-		const { mkdtempSync, writeFileSync } = require("node:fs");
-		const { join } = require("node:path");
-		const dir = mkdtempSync(join(require("node:os").tmpdir(), "tb-"));
-		const file = join(dir, "tollbooth.config.json");
-		writeFileSync(
-			file,
-			JSON.stringify({
-				wallets: { base: "0xtest" },
-				accepts: [{ asset: "USDC", network: "base" }],
-				upstreams: { api: { url: "not-a-url" } },
-				routes: { "GET /test": { upstream: "api" } },
-			}),
-		);
-		try {
-			loadConfig(file);
-		} catch (e: unknown) {
-			const msg = (e as Error).message;
-			expect(msg).toContain("upstreams.api.url");
-			expect(msg).toContain("→");
-			expect(msg).toContain("valid URL");
-		}
+		const msg = loadError({
+			...validConfig,
+			upstreams: { api: { url: "not-a-url" } },
+		});
+		expect(msg).toContain("upstreams.api.url");
+		expect(msg).toContain("→");
+		expect(msg).toContain("valid URL");
 	});
 
 	test("formats empty accepts array with suggestion", () => {
-		const { mkdtempSync, writeFileSync } = require("node:fs");
-		const { join } = require("node:path");
-		const dir = mkdtempSync(join(require("node:os").tmpdir(), "tb-"));
-		const file = join(dir, "tollbooth.config.json");
-		writeFileSync(
-			file,
-			JSON.stringify({
-				wallets: { base: "0xtest" },
-				accepts: [],
-				upstreams: { api: { url: "https://api.example.com" } },
-				routes: { "GET /test": { upstream: "api" } },
-			}),
-		);
-		try {
-			loadConfig(file);
-		} catch (e: unknown) {
-			const msg = (e as Error).message;
-			expect(msg).toContain("accepts");
-			expect(msg).toContain("→");
-			expect(msg).toContain("at least");
-		}
+		const msg = loadError({ ...validConfig, accepts: [] });
+		expect(msg).toContain("accepts");
+		expect(msg).toContain("→ Add at least 1 item(s)");
+	});
+
+	test("formats empty string with suggestion", () => {
+		const msg = loadError({ ...validConfig, wallets: { base: "" } });
+		expect(msg).toContain("wallets.base");
+		expect(msg).toContain("→ Value cannot be empty");
+	});
+
+	test("formats unknown fields with suggestion", () => {
+		const msg = loadError({
+			...validConfig,
+			settlement: { strategy: "facilitator", foo: 1 },
+		});
+		expect(msg).toContain("settlement");
+		expect(msg).toContain("→ Remove unknown field(s): foo");
+	});
+});
+
+describe("nested defaults", () => {
+	test("fill in when the parent section is omitted", () => {
+		const result = tollboothConfigSchema.safeParse({
+			wallets: { base: "0xtest" },
+			accepts: [{ asset: "USDC", network: "base" }],
+			upstreams: { api: { url: "https://api.example.com" } },
+			routes: { "GET /test": { upstream: "api" } },
+		});
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(result.data.gateway).toEqual({
+			port: 3000,
+			discovery: true,
+			metrics: { enabled: false, path: "/metrics" },
+			trustProxy: false,
+		});
+		expect(result.data.defaults).toEqual({ price: "$0.001", timeout: 60 });
 	});
 });
 

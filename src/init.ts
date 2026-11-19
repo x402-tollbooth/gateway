@@ -139,7 +139,9 @@ export async function runInit() {
 	const result = tollboothConfigSchema.safeParse(raw);
 	if (!result.success) {
 		const issues = result.error.issues
-			.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+			.map(
+				(issue) => `  - ${issue.path.map(String).join(".")}: ${issue.message}`,
+			)
 			.join("\n");
 		log.error("config_invalid", {
 			error: `Generated config is invalid:\n${issues}`,
@@ -328,7 +330,9 @@ export async function runInitFromOpenAPI(specPath: string) {
 	const result = tollboothConfigSchema.safeParse(raw);
 	if (!result.success) {
 		const issues = result.error.issues
-			.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+			.map(
+				(issue) => `  - ${issue.path.map(String).join(".")}: ${issue.message}`,
+			)
 			.join("\n");
 		log.error("config_invalid", {
 			error: `Generated config is invalid:\n${issues}`,
